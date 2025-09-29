@@ -73,13 +73,13 @@ The application follows a robust, scalable, and asynchronous "fire-and-forget" p
 Code snippet
 ```mermaid
 graph TD
-    subgraph "User Interaction (Fast)"
+    subgraph "User Interaction "
         A[User's Browser] -- 1. Submits Org ID --> B{Cloud Run Service: /scan};
         B -- 2. Creates Task (milliseconds) --> C[Cloud Tasks Queue];
         B -- 3. Redirects User --> G{Status Page};
     end
 
-    subgraph "Background Processing (Slow)"
+    subgraph "Background Processing "
       direction LR
       D{Cloud Run Service: /run-scan} -- 5. Runs Checks (Parallel)--> E[Google Cloud APIs];
       D -- 6. Uploads Reports --> F[Cloud Storage Bucket];
