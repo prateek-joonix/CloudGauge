@@ -1,3 +1,5 @@
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 # **CloudGauge**
 
 **Note:** This is not an officially supported Google product. This project is not eligible for the [Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).
@@ -8,86 +10,91 @@ It is built with Python/Flask and deployed as a serverless application on **Goog
 
 Final results are delivered as an interactive **HTML report** and a **CSV file** stored in a Google Cloud Storage bucket. The reports also feature **Gemini-powered** executive summaries and `gCloud` remediation suggestions.
 
+![CloudGauge Report Demo](https://placehold.co/800x400/2d3748/ffffff?text=CloudGauge+Report+Demo)
+
 ## **Table of Contents**
 
-* [Features](#features)  
-* [Architecture](#architecture)  
-* [Deployment Instructions](#deployment-instructions)  
-  * [Common Prerequisites (Required for all methods)](#common-prerequisites-\(required-for-all-methods\))  
-  * [Method 1: Deploy from Source (Recommended)](#method-1:-deploy-from-source-\(recommended\))  
-  * [Method 2: Manual Build & Deploy via gcloud](#method-2:-manual-build-&-deploy-via-gcloud)  
-* [How to Use](#how-to-use)  
-* [Troubleshooting](#troubleshooting)  
-* [License & Support](#license-&-support)
+* [Features](#features)
+* [Architecture](#architecture)
+* [Deployment Instructions](#deployment-instructions)
+  * [Common Prerequisites (Required for all methods)](#common-prerequisites-required-for-all-methods)
+  * [Method 1: Deploy from Source (Recommended)](#method-1-deploy-from-source-recommended)
+  * [Method 2: Manual Build & Deploy via gcloud](#method-2-manual-build--deploy-via-gcloud)
+* [How to Use](#how-to-use)
+* [Troubleshooting](#troubleshooting)
+* [License & Support](#license--support)
 
-## **Features** {#features}
+## **Features**
 
 CloudGauge scans your organization across several key domains, modeled after the Google Cloud Architecture Framework.
 
 ### **Security & Identity**
 
-* **Organization Policies**: Checks boolean policies against a list of best practices.  
-* **Organization IAM**: Scans for public principals (`allUsers`, `allAuthenticatedUsers`) and primitive roles (`owner`, `orgAdmin`) at the org level.  
-* **Project IAM**: Scans all projects for the use of primitive `roles/owner` and `roles/editor`.  
-* **Security Command Center**: Verifies that SCC Premium is enabled.  
-* **SA Key Rotation**: Finds user-managed service account keys older than 90 days.  
-* **Public GCS Buckets**: Detects GCS buckets that are publicly accessible.  
+* **Organization Policies**: Checks boolean policies against a list of best practices.
+* **Organization IAM**: Scans for public principals (`allUsers`, `allAuthenticatedUsers`) and primitive roles (`owner`, `orgAdmin`) at the org level.
+* **Project IAM**: Scans all projects for the use of primitive `roles/owner` and `roles/editor`.
+* **Security Command Center**: Verifies that SCC Premium is enabled.
+* **SA Key Rotation**: Finds user-managed service account keys older than 90 days.
+* **Public GCS Buckets**: Detects GCS buckets that are publicly accessible.
 * **Open Firewall Rules**: Scans all VPCs for firewall rules open to the internet (`0.0.0.0/0`).
 
 ### **Cost Optimization**
 
-* **Idle Resources**: Finds idle Cloud SQL instances, VMs, persistent disks, and unassociated IP addresses.  
-* **Rightsizing**: Identifies overprovisioned VMs and underutilized reservations.  
+* **Idle Resources**: Finds idle Cloud SQL instances, VMs, persistent disks, and unassociated IP addresses.
+* **Rightsizing**: Identifies overprovisioned VMs and underutilized reservations.
 * **Cost Insights**: Provides an on-demand, detailed scan for CPU/memory usage, idle images, and more.
 
 ### **Reliability & Resilience**
 
-* **Essential Contacts**: Ensures contacts are configured for `SECURITY`, `TECHNICAL`, and `LEGAL` categories.  
-* **Service Health**: Verifies that the Personalized Service Health API is enabled.  
-* **Cloud SQL Resilience**: Checks for High Availability (HA) configuration, automated backups, and Point-in-Time Recovery (PITR).  
-* **GCS Versioning**: Finds buckets without object versioning enabled.  
-* **GKE Hygiene**: Checks for clusters not on a release channel and node pools with auto-upgrade disabled.  
+* **Essential Contacts**: Ensures contacts are configured for `SECURITY`, `TECHNICAL`, and `LEGAL` categories.
+* **Service Health**: Verifies that the Personalized Service Health API is enabled.
+* **Cloud SQL Resilience**: Checks for High Availability (HA) configuration, automated backups, and Point-in-Time Recovery (PITR).
+* **GCS Versioning**: Finds buckets without object versioning enabled.
+* **GKE Hygiene**: Checks for clusters not on a release channel and node pools with auto-upgrade disabled.
 * **Resilience Assets**: Identifies zonal MIGs (recommends regional) and single-region disk snapshots.
 
 ### **Operational Excellence & Observability**
 
-* **Audit Logging**: Checks for an organization-level log sink.  
-* **OS Config Coverage**: Identifies running VMs (excluding GKE/Dataproc) that are not reporting to the OS Config service.  
-* **Monitoring Coverage**: Scans for projects missing key alert policies (e.g., Quota, Cloud SQL, GKE).  
-* **Network Analyzer**: Ingests and normalizes insights for VPC, GKE, and PSA IP address utilization.  
-* **Standalone VMs**: Finds VMs not managed by a Managed Instance Group (MIG).  
-* **Quota Utilization**: Identifies any regional compute quotas exceeding 80% utilization.  
+* **Audit Logging**: Checks for an organization-level log sink.
+* **OS Config Coverage**: Identifies running VMs (excluding GKE/Dataproc) that are not reporting to the OS Config service.
+* **Monitoring Coverage**: Scans for projects missing key alert policies (e.g., Quota, Cloud SQL, GKE).
+* **Network Analyzer**: Ingests and normalizes insights for VPC, GKE, and PSA IP address utilization.
+* **Standalone VMs**: Finds VMs not managed by a Managed Instance Group (MIG).
+* **Quota Utilization**: Identifies any regional compute quotas exceeding 80% utilization.
 * **Unattended Projects**: Flags projects with low utilization.
 
-##  **Architecture** {#architecture}
+##  **Architecture**
 
 The application follows a robust, scalable, and asynchronous "fire-and-forget" pattern. This ensures the user gets an immediate response while the heavy work (which can take many minutes) is done in the background.
 
-1. **UI Trigger**: A user navigates to the Cloud Run URL and submits an Organization ID.  
-2. **Task Creation**: The `/scan` endpoint creates a **Cloud Task** with the scan details and redirects the user to a status page.  
-3. **Background Worker**: Cloud Tasks securely invokes the `/run-scan` endpoint in the background.  
-4. **Parallel Processing**: The worker executes dozens of checks, running project-level scans in parallel using a thread pool.  
-5. **Report Storage**: The worker generates the HTML/CSV reports and uploads them to Google Cloud Storage.  
-6. **Status Polling**: The user's status page polls an API endpoint until the report files are found in GCS, at which point it displays the download links.
+1.  **UI Trigger**: A user navigates to the Cloud Run URL and submits an Organization ID.
+2.  **Task Creation**: The `/scan` endpoint creates a **Cloud Task** with the scan details and redirects the user to a status page.
+3.  **Background Worker**: Cloud Tasks securely invokes the `/run-scan` endpoint in the background.
+4.  **Parallel Processing**: The worker executes dozens of checks, running project-level scans in parallel using a thread pool.
+5.  **Report Storage**: The worker generates the HTML/CSV reports and uploads them to Google Cloud Storage.
+6.  **Status Polling**: The user's status page polls an API endpoint until the report files are found in GCS, at which point it displays the download links.
 
-Code snippet
+### **Architecture Diagram**
+
+The diagram below illustrates the asynchronous "fire-and-forget" pattern.
+
 ```mermaid
 graph TD
     subgraph "User Interaction "
-        A[User's Browser] -- 1. Submits Org ID --> B{Cloud Run Service: /scan};
-        B -- 2. Creates Task (milliseconds) --> C[Cloud Tasks Queue];
-        B -- 3. Redirects User --> G{Status Page};
+        A[User's Browser] -- "1. Submits Org ID" --> B{Cloud Run Service: /scan};
+        B -- "2. Creates Task (milliseconds)" --> C[Cloud Tasks Queue];
+        B -- "3. Redirects User" --> G{Status Page};
     end
 
     subgraph "Background Processing "
       direction LR
-      D{Cloud Run Service: /run-scan} -- 5. Runs Checks (Parallel)--> E[Google Cloud APIs];
-      D -- 6. Uploads Reports --> F[Cloud Storage Bucket];
+      D{Cloud Run Service: /run-scan} -- "5. Runs Checks (Parallel)"--> E[Google Cloud APIs];
+      D -- "6. Uploads Reports" --> F[Cloud Storage Bucket];
     end
 
-    C -- 4. Invokes Worker --> D;
-    G -- 7. Polls for Report --> F;
-    F -- 8. Report Ready --> G;
+    C -- "4. Invokes Worker" --> D;
+    G -- "7. Polls for Report" --> F;
+    F -- "8. Report Ready" --> G;
 ```
 
 ## **Deployment Instructions** {#deployment-instructions}
