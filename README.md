@@ -97,66 +97,44 @@ graph TD
     F -- "8. Report Ready" --> G;
 ```
 
-## **Deployment Instructions** {#deployment-instructions}
+## **Deployment Instructions** 
 
 Follow the **Common Prerequisites** first, then choose **Method 1** or **Method 2** to deploy.
 
-### **Common Prerequisites (Required for all methods)** {#common-prerequisites-(required-for-all-methods)}
+### **Common Prerequisites (Required for all methods)** 
 
 1. **Enable APIs**:  
    * A Google Cloud Project with billing enabled.  
    * [gcloud CLI](https://cloud.google.com/sdk/install) installed and authenticated (`gcloud auth login`).  
    * Run the following command to enable all necessary APIs:
 
-   gcloud services enable \\
-
-       run.googleapis.com \\
-
-       cloudbuild.googleapis.com \\
-
-       cloudtasks.googleapis.com \\
-
-       iam.googleapis.com \\
-
-       cloudresourcemanager.googleapis.com \\
-
-       logging.googleapis.com \\
-
-       recommender.googleapis.com \\
-
-       securitycenter.googleapis.com \\
-
-       servicehealth.googleapis.com \\
-
-       essentialcontacts.googleapis.com \\
-
-       compute.googleapis.com \\
-
-       container.googleapis.com \\
-
-       sqladmin.googleapis.com \\
-
-       osconfig.googleapis.com \\
-
-       monitoring.googleapis.com \\
-
-       storage.googleapis.com \\
-
-       aiplatform.googleapis.com \\
-
+   ```
+   gcloud services enable \
+       run.googleapis.com \
+       cloudbuild.googleapis.com \
+       cloudtasks.googleapis.com \
+       iam.googleapis.com \
+       cloudresourcemanager.googleapis.com \
+       logging.googleapis.com \
+       recommender.googleapis.com \
+       securitycenter.googleapis.com \
+       servicehealth.googleapis.com \
+       essentialcontacts.googleapis.com \
+       compute.googleapis.com \
+       container.googleapis.com \
+       sqladmin.googleapis.com \
+       osconfig.googleapis.com \
+       monitoring.googleapis.com \
+       storage.googleapis.com \
+       aiplatform.googleapis.com \
        cloudasset.googleapis.com
-
-   
-
-   
-
+   ```
    
 
 2. **Create Service Account & Grant Permissions**:  
    * This SA will be used by the Cloud Run service to scan the organization and create tasks.
-
+```
    \# Set your Organization ID
-
    export ORG\_ID="\<your-org-id\>"
 
    
@@ -164,9 +142,7 @@ Follow the **Common Prerequisites** first, then choose **Method 1** or **Method 
    \# Set Project and SA variables
 
    export PROJECT\_ID=$(gcloud config get-value project)
-
    export SA\_NAME="cloudgauge-sa"
-
    export SA\_EMAIL="${SA\_NAME}@${PROJECT\_ID}.iam.gserviceaccount.com"
 
    
@@ -228,18 +204,18 @@ Follow the **Common Prerequisites** first, then choose **Method 1** or **Method 
    gcloud iam service-accounts add-iam-policy-binding ${SA\_EMAIL} \--member="serviceAccount:${SA\_EMAIL}"  \--role="roles/iam.serviceAccountTokenCreator" 
 
    gcloud iam service-accounts add-iam-policy-binding ${SA\_EMAIL} \--member="serviceAccount:${SA\_EMAIL}"  \--role="roles/iam.serviceAccountUser"
-
+```
 3. **Create GCS Bucket**:
-
+```
 export BUCKET\_NAME="cloudgauge-reports-${PROJECT\_ID}"
 
 gsutil mb \-p ${PROJECT\_ID} gs://${BUCKET\_NAME}
-
+```
 ---
 
 ### 
 
-### **Method 1: Deploy from Source (Recommended)** {#method-1:-deploy-from-source-(recommended)}
+### **Method 1: Deploy from Source (Recommended)** 
 
 This is the simplest way to deploy. Cloud Run will build and deploy the service directly from this repository.
 
@@ -258,11 +234,12 @@ This is the simplest way to deploy. Cloud Run will build and deploy the service 
    * `LOCATION`: The region you chose (e.g., `asia-south1`)  
 9. Click **Create**. The service will build and deploy. **The first deployment may fail or the app will not work correctly.** This is expected because the `WORKER_URL` is not yet set.  
 10. **Grant Invoker Permission:** Once the service is created, you must grant its SA permission to invoke itself (for Cloud Tasks). Run the following command:  
-    Bash  
+    ```
     gcloud run services add-iam-policy-binding cloudgauge-service \\  
       \--member="serviceAccount:${SA\_EMAIL}" \\  
       \--role="roles/run.invoker" \\  
-      \--region=asia-south1  
+      \--region=asia-south1
+    ```
 11. *Replace `cloudgauge-checker` and `asia-south1` if you used different values*  
 12. **Update the Service:**  
     * Get the URL of your new service from the Cloud Run UI.  
@@ -273,29 +250,27 @@ This is the simplest way to deploy. Cloud Run will build and deploy the service 
 
 ---
 
-### **Method 2: Manual Build & Deploy via gcloud** {#method-2:-manual-build-&-deploy-via-gcloud}
+### **Method 2: Manual Build & Deploy via gcloud** 
 
 This method gives you manual control over the build and deploy steps.
 
 1. **Clone this repository**:
-
+```
 git clone https://github.com/GoogleCloudPlatform/CloudGauge
-
 cd cloudgauge
-
+```
 2. **Set Environment Variables**:  
    * (You should already have `PROJECT_ID` and `SA_EMAIL` from the common setup)
-
-   export REGION="asia-south1" \# Or your preferred region  
+```
+     export REGION="asia-south1" \# Or your preferred region  
      export SERVICE\_NAME="cloudgauge-checker"  
      export BUCKET\_NAME="cloudgauge-reports-${PROJECT\_ID}"  
      export QUEUE\_NAME="cloudgauge-scan-queue"
+```   
 
-   
-
-3. **Build and Deploy Service (Step 1 of 2\)**:  
+3. **Build and Deploy Service (Step 1 of 2\)**:
    * This command builds the container and deploys it without the `WORKER_URL`.
-
+```
 \# Build the container image using Cloud Build  
 gcloud builds submit . \--tag "gcr.io/${PROJECT\_ID}/${SERVICE\_NAME}"
 
@@ -308,31 +283,31 @@ gcloud run deploy ${SERVICE\_NAME} \\
   \--platform managed \\  
   \--timeout=3600 \\  
 \--set-env-vars=PROJECT\_ID=${PROJECT\_ID},TASK\_QUEUE=${QUEUE\_NAME},RESULTS\_BUCKET=${BUCKET\_NAME},SERVICE\_ACCOUNT\_EMAIL=${SA\_EMAIL},LOCATION=${REGION}
-
+```
 4. **Grant Invoker Permission**:  
    * Now that the service exists, give its SA permission to invoke it.
-
+```
 gcloud run services add-iam-policy-binding ${SERVICE\_NAME} \\  
   \--member="serviceAccount:${SA\_EMAIL}" \\  
   \--role="roles/run.invoker" \\  
   \--region=${REGION}
-
+```
 5. **Get Deployed Service URL**:
-
+```
 export SERVICE\_URL=$(gcloud run services describe ${SERVICE\_NAME} \--platform managed \--region ${REGION} \--format 'value(status.url)')  
 echo "Service URL is: ${SERVICE\_URL}"
-
+```
 6. **Update Service with its Own URL (Step 2 of 2\)**:  
    * Update the service to provide it with its own URL, which Cloud Tasks will use.
-
+```
 gcloud run services update ${SERVICE\_NAME} \\  
   \--platform managed \\  
   \--region ${REGION} \\  
   \--update-env-vars=WORKER\_URL=${SERVICE\_URL}
-
+```
 Your service is now fully deployed and configured\!
 
-## **How to Use** {#how-to-use}
+## **How to Use** 
 
 1. Navigate to your service's URL (`${SERVICE_URL}`).  
 2. Enter your Google Cloud Organization ID.  
@@ -340,7 +315,7 @@ Your service is now fully deployed and configured\!
 4. You will be redirected to a status page. Wait for the scan to complete (this can take 5-15 minutes depending on org size).  
 5. Once finished, links to the **Interactive HTML Report** and **Download CSV Report** will appear.
 
-## **Troubleshooting** {#troubleshooting}
+## **Troubleshooting** 
 
 If the status page is stuck for a long time, the background worker is likely failing.
 
@@ -359,7 +334,7 @@ If the status page is stuck for a long time, the background worker is likely fai
 3. Go to the **LOGS** tab.  
 4. Look at the status of the task attempts. If you see a `PERMISSION_DENIED` (HTTP 403\) error, it means you missed the **"Grant Invoker Permission"** step.
 
-## **License & Support** {#license-&-support}
+## **License & Support** 
 
 This is not an officially supported Google product. This project is not eligible for the [Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).
 
