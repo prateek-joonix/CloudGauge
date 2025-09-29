@@ -71,8 +71,7 @@ The application follows a robust, scalable, and asynchronous "fire-and-forget" p
 6. **Status Polling**: The user's status page polls an API endpoint until the report files are found in GCS, at which point it displays the download links.
 
 Code snippet
-
-```
+```mermaid
 graph TD
     subgraph "User Interaction (Fast)"
         A[User's Browser] -- 1. Submits Org ID --> B{Cloud Run Service: /scan};
