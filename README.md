@@ -102,8 +102,45 @@ Follow the **Common Prerequisites** first, then choose **Method 1** or **Method 
    * [gcloud CLI](https://cloud.google.com/sdk/install) installed and authenticated (`gcloud auth login`).  
    * Run the following command to enable all necessary APIs:
 
-| gcloud services enable \\    run.googleapis.com \\    cloudbuild.googleapis.com \\    cloudtasks.googleapis.com \\    iam.googleapis.com \\    cloudresourcemanager.googleapis.com \\    logging.googleapis.com \\    recommender.googleapis.com \\    securitycenter.googleapis.com \\    servicehealth.googleapis.com \\    essentialcontacts.googleapis.com \\    compute.googleapis.com \\    container.googleapis.com \\    sqladmin.googleapis.com \\    osconfig.googleapis.com \\    monitoring.googleapis.com \\    storage.googleapis.com \\    aiplatform.googleapis.com \\    cloudasset.googleapis.com |
-| :---- |
+   gcloud services enable \\
+
+       run.googleapis.com \\
+
+       cloudbuild.googleapis.com \\
+
+       cloudtasks.googleapis.com \\
+
+       iam.googleapis.com \\
+
+       cloudresourcemanager.googleapis.com \\
+
+       logging.googleapis.com \\
+
+       recommender.googleapis.com \\
+
+       securitycenter.googleapis.com \\
+
+       servicehealth.googleapis.com \\
+
+       essentialcontacts.googleapis.com \\
+
+       compute.googleapis.com \\
+
+       container.googleapis.com \\
+
+       sqladmin.googleapis.com \\
+
+       osconfig.googleapis.com \\
+
+       monitoring.googleapis.com \\
+
+       storage.googleapis.com \\
+
+       aiplatform.googleapis.com \\
+
+       cloudasset.googleapis.com
+
+   
 
    
 
@@ -112,15 +149,85 @@ Follow the **Common Prerequisites** first, then choose **Method 1** or **Method 
 2. **Create Service Account & Grant Permissions**:  
    * This SA will be used by the Cloud Run service to scan the organization and create tasks.
 
-| \# Set your Organization IDexport ORG\_ID="\<your-org-id\>"\# Set Project and SA variablesexport PROJECT\_ID=$(gcloud config get-value project)export SA\_NAME="cloudgauge-sa"export SA\_EMAIL="${SA\_NAME}@${PROJECT\_ID}.iam.gserviceaccount.com"\# Create the Service Accountgcloud iam service-accounts create ${SA\_NAME} \--display-name="CloudGauge Service Account"\# \--- Grant Permissions \---\# 1\. Grant ORG-level roles to read assets and policiesgcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/browser"gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/cloudasset.viewer"gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/compute.networkViewer"gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/essentialcontacts.viewer"gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/recommender.iamViewer"gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/logging.viewer"gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/monitoring.viewer"gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/orgpolicy.policyViewer"gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/resourcemanager.organizationViewer"gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/servicehealth.viewer"gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/securitycenter.settingsViewer"gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/iam.securityReviewer"\# 2\. Grant PROJECT-level roles (on the project where Cloud Run is deployed)gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/aiplatform.user"gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/storage.objectCreator"gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/storage.objectViewer"gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/cloudtasks.admin"\# 3\. Service Account Token Creator and User role to the SA itself for signed URLsgcloud iam service-accounts add-iam-policy-binding ${SA\_EMAIL} \--member="serviceAccount:${SA\_EMAIL}"  \--role="roles/iam.serviceAccountTokenCreator" gcloud iam service-accounts add-iam-policy-binding ${SA\_EMAIL} \--member="serviceAccount:${SA\_EMAIL}"  \--role="roles/iam.serviceAccountUser" |
-| :---- |
+   \# Set your Organization ID
+
+   export ORG\_ID="\<your-org-id\>"
 
    
 
+   \# Set Project and SA variables
+
+   export PROJECT\_ID=$(gcloud config get-value project)
+
+   export SA\_NAME="cloudgauge-sa"
+
+   export SA\_EMAIL="${SA\_NAME}@${PROJECT\_ID}.iam.gserviceaccount.com"
+
+   
+
+   \# Create the Service Account
+
+   gcloud iam service-accounts create ${SA\_NAME} \--display-name="CloudGauge Service Account"
+
+   
+
+   \# \--- Grant Permissions \---
+
+   
+
+   \# 1\. Grant ORG-level roles to read assets and policies
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/browser"
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/cloudasset.viewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/compute.networkViewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/essentialcontacts.viewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/recommender.iamViewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/logging.viewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/monitoring.viewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/orgpolicy.policyViewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/resourcemanager.organizationViewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/servicehealth.viewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/securitycenter.settingsViewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/iam.securityReviewer"
+
+   
+
+   
+
+   \# 2\. Grant PROJECT-level roles (on the project where Cloud Run is deployed)
+
+   gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/aiplatform.user"
+
+   gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/storage.objectCreator"
+
+   gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/storage.objectViewer"
+
+   gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/cloudtasks.admin"
+
+   
+
+   \# 3\. Service Account Token Creator and User role to the SA itself for signed URLs
+
+   gcloud iam service-accounts add-iam-policy-binding ${SA\_EMAIL} \--member="serviceAccount:${SA\_EMAIL}"  \--role="roles/iam.serviceAccountTokenCreator" 
+
+   gcloud iam service-accounts add-iam-policy-binding ${SA\_EMAIL} \--member="serviceAccount:${SA\_EMAIL}"  \--role="roles/iam.serviceAccountUser"
+
 3. **Create GCS Bucket**:
 
-| export BUCKET\_NAME="cloudgauge-reports-${PROJECT\_ID}"gsutil mb \-p ${PROJECT\_ID} gs://${BUCKET\_NAME} |
-| :---- |
+export BUCKET\_NAME="cloudgauge-reports-${PROJECT\_ID}"
+
+gsutil mb \-p ${PROJECT\_ID} gs://${BUCKET\_NAME}
 
 ---
 
@@ -145,13 +252,11 @@ This is the simplest way to deploy. Cloud Run will build and deploy the service 
    * `LOCATION`: The region you chose (e.g., `asia-south1`)  
 9. Click **Create**. The service will build and deploy. **The first deployment may fail or the app will not work correctly.** This is expected because the `WORKER_URL` is not yet set.  
 10. **Grant Invoker Permission:** Once the service is created, you must grant its SA permission to invoke itself (for Cloud Tasks). Run the following command:  
-    Bash
-
-| gcloud run services add-iam-policy-binding cloudgauge-service \\  \--member="serviceAccount:${SA\_EMAIL}" \\  \--role="roles/run.invoker" \\  \--region=asia-south1 |
-| :---- |
-
-    
-
+    Bash  
+    gcloud run services add-iam-policy-binding cloudgauge-service \\  
+      \--member="serviceAccount:${SA\_EMAIL}" \\  
+      \--role="roles/run.invoker" \\  
+      \--region=asia-south1  
 11. *Replace `cloudgauge-checker` and `asia-south1` if you used different values*  
 12. **Update the Service:**  
     * Get the URL of your new service from the Cloud Run UI.  
@@ -168,41 +273,56 @@ This method gives you manual control over the build and deploy steps.
 
 1. **Clone this repository**:
 
-| git clone https://github.com/your-username/cloudgauge.gitcd cloudgauge |
-| :---- |
+git clone https://github.com/GoogleCloudPlatform/CloudGauge
 
-   
+cd cloudgauge
 
 2. **Set Environment Variables**:  
    * (You should already have `PROJECT_ID` and `SA_EMAIL` from the common setup)
 
-| export REGION\="asia-south1" \# Or your preferred regionexport SERVICE\_NAME\="cloudgauge-checker"export BUCKET\_NAME\="cloudgauge-reports-${PROJECT\_ID}"export QUEUE\_NAME\="cloudgauge-scan-queue" |
-| :---- |
+   export REGION="asia-south1" \# Or your preferred region  
+     export SERVICE\_NAME="cloudgauge-checker"  
+     export BUCKET\_NAME="cloudgauge-reports-${PROJECT\_ID}"  
+     export QUEUE\_NAME="cloudgauge-scan-queue"
+
+   
 
 3. **Build and Deploy Service (Step 1 of 2\)**:  
    * This command builds the container and deploys it without the `WORKER_URL`.
 
-| \# Build the container image using Cloud Buildgcloud builds submit . \--tag "gcr.io/${PROJECT\_ID}/${SERVICE\_NAME}"\# Deploy to Cloud Rungcloud run deploy ${SERVICE\_NAME} \\  \--image "gcr.io/${PROJECT\_ID}/${SERVICE\_NAME}" \\  \--service-account ${SA\_EMAIL} \\  \--region ${REGION} \\  \--allow-unauthenticated \\  \--platform managed \\  \--timeout\=3600 \\\--set-env-vars\=PROJECT\_ID=${PROJECT\_ID},TASK\_QUEUE\=${QUEUE\_NAME},RESULTS\_BUCKET=${BUCKET\_NAME},SERVICE\_ACCOUNT\_EMAIL\=${SA\_EMAIL},LOCATION=${REGION} |
-| :---- |
+\# Build the container image using Cloud Build  
+gcloud builds submit . \--tag "gcr.io/${PROJECT\_ID}/${SERVICE\_NAME}"
+
+\# Deploy to Cloud Run  
+gcloud run deploy ${SERVICE\_NAME} \\  
+  \--image "gcr.io/${PROJECT\_ID}/${SERVICE\_NAME}" \\  
+  \--service-account ${SA\_EMAIL} \\  
+  \--region ${REGION} \\  
+  \--allow-unauthenticated \\  
+  \--platform managed \\  
+  \--timeout=3600 \\  
+\--set-env-vars=PROJECT\_ID=${PROJECT\_ID},TASK\_QUEUE=${QUEUE\_NAME},RESULTS\_BUCKET=${BUCKET\_NAME},SERVICE\_ACCOUNT\_EMAIL=${SA\_EMAIL},LOCATION=${REGION}
 
 4. **Grant Invoker Permission**:  
    * Now that the service exists, give its SA permission to invoke it.
 
-| gcloud run services add-iam-policy-binding ${SERVICE\_NAME} \\  \--member\="serviceAccount:${SA\_EMAIL}" \\  \--role\="roles/run.invoker" \\  \--region\=${REGION} |
-| :---- |
-
-   
+gcloud run services add-iam-policy-binding ${SERVICE\_NAME} \\  
+  \--member="serviceAccount:${SA\_EMAIL}" \\  
+  \--role="roles/run.invoker" \\  
+  \--region=${REGION}
 
 5. **Get Deployed Service URL**:
 
-| export SERVICE\_URL=$(gcloud run services describe ${SERVICE\_NAME} \--platform managed \--region ${REGION} \--format 'value(status.url)')echo "Service URL is: ${SERVICE\_URL}" |
-| :---- |
+export SERVICE\_URL=$(gcloud run services describe ${SERVICE\_NAME} \--platform managed \--region ${REGION} \--format 'value(status.url)')  
+echo "Service URL is: ${SERVICE\_URL}"
 
 6. **Update Service with its Own URL (Step 2 of 2\)**:  
    * Update the service to provide it with its own URL, which Cloud Tasks will use.
 
-| gcloud run services update ${SERVICE\_NAME} \\  \--platform managed \\  \--region ${REGION} \\  \--update-env-vars=WORKER\_URL=${SERVICE\_URL} |
-| :---- |
+gcloud run services update ${SERVICE\_NAME} \\  
+  \--platform managed \\  
+  \--region ${REGION} \\  
+  \--update-env-vars=WORKER\_URL=${SERVICE\_URL}
 
 Your service is now fully deployed and configured\!
 
@@ -240,4 +360,3 @@ This is not an officially supported Google product. This project is not eligible
 This project is licensed under the Apache 2.0 License. See the `LICENSE` file for details.
 
 For issues or feature requests, please file an issue on the project's GitHub page.
-
