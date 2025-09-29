@@ -348,7 +348,7 @@ If the status page is stuck for a long time, the background worker is likely fai
   * **Via gcloud CLI**:
 
 ```
-gcloud run services update cloudgauge-checker \
+gcloud run services update cloudgauge-service \
   --memory=1Gi \
   --region=<your-region>
 ```
