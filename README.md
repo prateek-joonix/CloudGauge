@@ -315,17 +315,17 @@ Your service is now fully deployed and configured\!
 4. You will be redirected to a status page. Wait for the scan to complete (this can take 5-15 minutes depending on org size).  
 5. Once finished, links to the **Interactive HTML Report** and **Download CSV Report** will appear.
 
-## **Troubleshooting** 
+## **Troubleshooting**
 
 If the status page is stuck for a long time, the background worker is likely failing.
 
 ### **Step 1: Check the Cloud Run Logs**
 
 1. Go to the **Cloud Run** page in the Google Cloud Console.  
-2. Click on your service (`cloudgauge-checker`).  
+2. Click on your service (`cloudgauge-service`).  
 3. Go to the **LOGS** tab.  
 4. Look for log entries for requests made to the `/run-scan` URL.  
-5. If you see logs for `/run-scan`, look for any errors in red. Common errors are **permission denied** messages from APIs (e.g., `PERMISSION_DENIED on resource ...`). This means the Service Account is missing an IAM role.
+5. If you see logs for `/run-scan`, look for any errors in red.
 
 ### **Step 2: Check the Cloud Tasks Logs**
 
@@ -333,6 +333,64 @@ If the status page is stuck for a long time, the background worker is likely fai
 2. Click on your queue (`cloudgauge-scan-queue`).  
 3. Go to the **LOGS** tab.  
 4. Look at the status of the task attempts. If you see a `PERMISSION_DENIED` (HTTP 403\) error, it means you missed the **"Grant Invoker Permission"** step.
+
+### **Step 3: Resolve Common Errors**
+
+#### **Memory Limit Exceeded**
+
+* **Error Message**: You might see an error in the Cloud Run logs that says: “`Memory limit of 512 MiB exceeded …”`  
+* **Cause**: The scan process is using more memory than the default amount allocated to the Cloud Run service.  
+* **Solution**: You need to increase the memory allocated to your service.  
+  * **Via Console**:  
+    1. Click **"Edit & Deploy New Revision"** on your Cloud Run service page.  
+    2. Under the "General" tab, find **"Memory allocation"** and increase it (e.g., to `1 GiB`).  
+    3. Click **Deploy**.  
+  * **Via gcloud CLI**:
+
+```
+gcloud run services update cloudgauge-checker \
+  --memory=1Gi \
+  --region=<your-region>
+```
+
+    
+
+---
+
+#### **Permission Denied on Google Cloud APIs**
+
+* **Error Message**: The logs show a `PERMISSION_DENIED` error related to a specific Google Cloud service, such as `storage.googleapis.com` or `iam.googleapis.com`.  
+* **Cause**: The service account (`cloudgauge-sa@...`) is missing an IAM role needed to access a specific API.  
+* **Solution**: The error message will usually state which permission is missing. Go back to the **"Common Prerequisites"** section of the deployment instructions and verify that all `gcloud ... add-iam-policy-binding` commands were run successfully against the correct service account. You may need to re-run the command for the missing role.
+
+---
+
+#### **Container Failed to Start**
+
+* **Error Message**: The Cloud Run revision is not becoming healthy, and the logs show an error right at startup, such as `ModuleNotFoundError` in Python or an error about a missing environment variable.  
+* **Cause**: This typically happens for one of two reasons:  
+  1. An environment variable was not set correctly.  
+  2. There is a bug in the application code or a missing dependency in `requirements.txt`.  
+* **Solution**:  
+  1. Check the **LOGS** tab for the specific error message that occurs when the container tries to start.  
+  2. If the error is related to a variable, click **"Edit & Deploy New Revision,"** go to the **"Variables & Secrets"** tab, and ensure all required variables (`PROJECT_ID`, `WORKER_URL`, etc.) are present and have the correct values.  
+  3. If it is a code error, you will need to fix the source code and deploy a new revision.
+
+---
+
+#### **Request Timeout**
+
+* **Error Message**: The logs show an HTTP `504` status code or a message like "The request has been terminated because it has reached its deadline."  
+* **Cause**: The scan is taking longer to complete than the configured request timeout on the Cloud Run service.  
+* **Solution**: The deployment instructions recommend a timeout of `3600` seconds (1 hour). Verify this was set correctly.  
+  * **Via Console**: Go to **"Edit & Deploy New Revision"** and check the **"Request timeout"** value under the "General" tab.  
+  * **Via gcloud CLI**: You can update the service with the correct timeout using:
+
+```
+gcloud run services update cloudgauge-service \
+  --timeout=3600 \
+  --region=<your-region>
+```
 
 ## **License & Support** 
 
