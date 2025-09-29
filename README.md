@@ -10,7 +10,7 @@ It is built with Python/Flask and deployed as a serverless application on **Goog
 
 Final results are delivered as an interactive **HTML report** and a **CSV file** stored in a Google Cloud Storage bucket. The reports also feature **Gemini-powered** executive summaries and `gCloud` remediation suggestions.
 
-![CloudGauge Report Demo](https://placehold.co/800x400/2d3748/ffffff?text=CloudGauge+Report+Demo)
+![CloudGauge Report Demo](./assets/cloudgauge.gif)
 
 ## **Table of Contents**
 
