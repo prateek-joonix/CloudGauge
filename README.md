@@ -143,17 +143,17 @@ Follow the **Common Prerequisites** first, then choose **Method 1** or **Method 
 
    export PROJECT_ID=$(gcloud config get-value project)
    export SA_NAME="cloudgauge-sa"
-   export SA_EMAIL="${SA\_NAME}@${PROJECT\_ID}.iam.gserviceaccount.com"
+   export SA_EMAIL="${SA\_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
    
 
    # Create the Service Account
 
-   gcloud iam service-accounts create ${SA\_NAME} --display-name="CloudGauge Service Account"
+   gcloud iam service-accounts create ${SA_NAME} --display-name="CloudGauge Service Account"
 
    
 
-   # \--- Grant Permissions \---
+   #  Grant Permissions 
 
    
 
@@ -235,10 +235,10 @@ This is the simplest way to deploy. Cloud Run will build and deploy the service 
 9. Click **Create**. The service will build and deploy. **The first deployment may fail or the app will not work correctly.** This is expected because the `WORKER_URL` is not yet set.  
 10. **Grant Invoker Permission:** Once the service is created, you must grant its SA permission to invoke itself (for Cloud Tasks). Run the following command:  
     ```
-    gcloud run services add-iam-policy-binding cloudgauge-service \\  
-      \--member="serviceAccount:${SA\_EMAIL}" \\  
-      \--role="roles/run.invoker" \\  
-      \--region=asia-south1
+    gcloud run services add-iam-policy-binding cloudgauge-service \
+      --member="serviceAccount:${SA\_EMAIL}" \
+      --role="roles/run.invoker" \
+      --region=asia-south1
     ```
 11. *Replace `cloudgauge-checker` and `asia-south1` if you used different values*  
 12. **Update the Service:**  
