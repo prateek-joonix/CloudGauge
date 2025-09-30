@@ -237,7 +237,7 @@ This is the simplest way to deploy. Cloud Run will build and deploy the service 
 10. **Grant Invoker Permission:** Once the service is created, you must grant its SA permission to invoke itself (for Cloud Tasks). Run the following command:  
     ```
     gcloud run services add-iam-policy-binding cloudgauge-service \
-      --member="serviceAccount:${SA\_EMAIL}" \
+      --member="serviceAccount:${SA_EMAIL}" \
       --role="roles/run.invoker" \
       --region=asia-south1
     ```
@@ -455,7 +455,7 @@ gcloud projects remove-iam-policy-binding ${PROJECT_ID} --member="serviceAccount
 gcloud projects remove-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/run.invoker" --quiet # This was added to the SA itself, but good to be explicit
 
 # 6. Delete the Service Account
-echo "🗑️ Deleting service account: ${SA_EMAIL}..."
+echo "Deleting service account: ${SA_EMAIL}..."
 gcloud iam service-accounts delete ${SA_EMAIL} --quiet
 
 echo "✅ Cleanup complete!"
