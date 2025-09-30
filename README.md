@@ -218,36 +218,84 @@ gsutil mb -p ${PROJECT_ID} gs://${BUCKET_NAME}
 
 ### **Method 1: Deploy from Source (Recommended)** 
 
-This is the simplest way to deploy. Cloud Run will build and deploy the service directly from this repository.
+### **Step 1: Fork the GitHub Repository** 
 
-1. **Fork** this repository to your own GitHub account.  
-2. In the Google Cloud Console, navigate to **Cloud Run** and click **Create Service**.  
-3. Select **"Continuously deploy new revisions from a source repository"** and click **"Set up with Cloud Build"**. Connect your forked GitHub repository.  
-4. In the build settings, select **"Dockerfile"** as the build type. The `Dockerfile` path should be `/Dockerfile`.  
-5. Set the **Service name** (e.g., `cloudgauge-checker`) and select a **Region** (e.g., `asia-south1`).  
-6. Under **"Container(s), Volumes, Networking, Security"**, go to the **"Identity & Security"** tab and select the Service Account you created (`cloudgauge-sa@...`).  
-7. Go to the **"General"** tab and set the **Request Timeout** to `3600` seconds (1 hour).  
-8. Go to the **"Variables & Secrets"** tab and add the following **Environment Variables**:  
-   * `PROJECT_ID`: Your GCP Project ID (e.g., `my-gcp-project`)  
-   * `TASK_QUEUE`: `cloudgauge-scan-queue`  
-   * `RESULTS_BUCKET`: The bucket name you created (e.g., `cloudgauge-reports-my-gcp-project`)  
-   * `SERVICE_ACCOUNT_EMAIL`: The SA email (e.g., `cloudgauge-sa@my-gcp-project.iam.gserviceaccount.com`)  
-   * `LOCATION`: The region you chose (e.g., `asia-south1`)  
-9. Click **Create**. The service will build and deploy. **The first deployment may fail or the app will not work correctly.** This is expected because the `WORKER_URL` is not yet set.  
-10. **Grant Invoker Permission:** Once the service is created, you must grant its SA permission to invoke itself (for Cloud Tasks). Run the following command:  
-    ```
-    gcloud run services add-iam-policy-binding cloudgauge-service \
-      --member="serviceAccount:${SA_EMAIL}" \
-      --role="roles/run.invoker" \
-      --region=asia-south1
-    ```
-11. *Replace `cloudgauge-checker` and `asia-south1` if you used different values*  
-12. **Update the Service:**  
-    * Get the URL of your new service from the Cloud Run UI.  
-    * Click **"Edit & Deploy New Revision"**.  
-    * Go back to the **"Variables & Secrets"** tab and add **one more** environment variable:  
-      * `WORKER_URL`: The URL of your service (e.g., `https://cloudgauge-checker-....run.app`)  
-    * Click **Deploy**. This second revision will now function correctly.
+First, you need your own copy of the code.
+
+1. Navigate to the [CloudGauge GitHub repository](https://github.com/GoogleCloudPlatform/CloudGauge/).  
+2. Click the **Fork** button in the top-right corner of the page.  
+3. Choose your GitHub account as the destination for the fork. This will create a copy of the repository under your account (e.g., `https://github.com/your-username/CloudGauge`).
+
+---
+
+### **Step 2: Create the Cloud Run Service (First Deployment)** 
+
+Now, let's create the initial Cloud Run service and connect it to your new repository.
+
+1. In the Google Cloud Console, go to the **Cloud Run** page.  
+2. Click **Create Service**.  
+3. Select **Continuously deploy new revisions from a source repository** and click **Set up with Cloud Build**.  
+4. A new panel will appear. In the "Source" section, under "Repository", click **Manage connected repositories**.  
+5. A new window will pop up, prompting you to **install the Google Cloud Build app** on GitHub.  
+   * Select your GitHub username or organization.  
+   * In the "Repository access" section, choose either **All repositories** or **Only select repositories**. If you choose the latter, make sure you select your forked `CloudGauge` repository.  
+   * Click **Install** or **Save**.  
+6. Back in the Cloud Console, select your newly connected forked repository and branch (`main`), then click **Next**.  
+7. In the **Build Settings** section:  
+   * **Build Type**: Select `Dockerfile`.  
+   * **Source location**: Keep the default `/Dockerfile`.  
+   * Click **Save**.  
+8. Configure the service details:  
+   * **Service name**: Give it a name like `cloudgauge-service`.  
+   * **Region**: Choose a region, for example, `asia-south1`.  
+9. Expand the "Container(s), Volumes, Networking, Security" section.  
+   * Go to the **Identity & Security** tab and select the service account you previously created (e.g., `cloudgauge-sa@...`).  
+   * Go to the **General** tab and set the **Request Timeout** to `3600` seconds.  
+   * Go to the **Variables & Secrets** tab and add the following **Environment Variables**. Replace the example values with your own.  
+     * `PROJECT_ID`: Your GCP Project ID (e.g., `my-gcp-project`)  
+     * `TASK_QUEUE`: `cloudgauge-scan-queue`  
+     * `RESULTS_BUCKET`: The name of your GCS bucket (e.g., `cloudgauge-reports-my-gcp-project`)  
+     * `SERVICE_ACCOUNT_EMAIL`: The full email of your service account  
+     * `LOCATION`: The region you selected (e.g., `asia-south1`)  
+10. Click **Create**. The service will start building and deploying.
+
+**Note:** The application logs might show errors at this stage. This is normal because the `WORKER_URL` is missing.
+
+---
+
+### **Step 3: Grant Invocation Permissions** 
+
+The service needs permission to invoke itself, which is a common pattern when using Cloud Tasks to trigger background work.
+
+1. Once the service is created, find its URL on the Cloud Run details page.  
+2. Open the **Cloud Shell** or your local terminal with `gcloud` configured.  
+3. Run the following command, replacing the placeholders with your actual service name, service account email, and region.
+
+```
+# Store your service account email in a variable for convenience  
+SA_EMAIL="cloudgauge-sa@your-project-id.iam.gserviceaccount.com"
+
+# Grant the invoker role 
+gcloud run services add-iam-policy-binding cloudgauge-service \  
+  --member="serviceAccount:${SA_EMAIL}" \ 
+  --role="roles/run.invoker" 
+  --region=asia-south1
+```
+---
+
+### **Step 4: Update the Service with the Final URL (Second Deployment)** 
+
+Finally, deploy a new revision with the missing environment variable.
+
+1. Go back to your service's page in the Cloud Run console.  
+2. Copy the **URL** shown at the top of the page. It will look something like `https://cloudgauge-service-xxxxxxxxxx-as.a.run.app`.  
+3. Click **Edit & Deploy New Revision**.  
+4. Navigate to the **Variables & Secrets** tab again.  
+5. Click **Add Variable** and add the final required variable:  
+   * `WORKER_URL`: Paste the URL you just copied.  
+6. Click **Deploy**.
+
+After this second deployment finishes, your CloudGauge service will be fully configured and operational\!
 
 ---
 
@@ -264,7 +312,7 @@ cd cloudgauge
    * (You should already have `PROJECT_ID` and `SA_EMAIL` from the common setup)
 ```
      export REGION="asia-south1" # Or your preferred region  
-     export SERVICE_NAME="cloudgauge-checker"  
+     export SERVICE_NAME="cloudgauge-service"  
      export BUCKET_NAME="cloudgauge-reports-${PROJECT_ID}"  
      export QUEUE_NAME="cloudgauge-scan-queue"
 ```   
