@@ -134,82 +134,82 @@ Follow the **Common Prerequisites** first, then choose **Method 1** or **Method 
 2. **Create Service Account & Grant Permissions**:  
    * This SA will be used by the Cloud Run service to scan the organization and create tasks.
 ```
-   \# Set your Organization ID
-   export ORG\_ID="\<your-org-id\>"
+   # Set your Organization ID
+   export ORG_ID="<your-org-id>"
 
    
 
-   \# Set Project and SA variables
+   # Set Project and SA variables
 
-   export PROJECT\_ID=$(gcloud config get-value project)
-   export SA\_NAME="cloudgauge-sa"
-   export SA\_EMAIL="${SA\_NAME}@${PROJECT\_ID}.iam.gserviceaccount.com"
-
-   
-
-   \# Create the Service Account
-
-   gcloud iam service-accounts create ${SA\_NAME} \--display-name="CloudGauge Service Account"
+   export PROJECT_ID=$(gcloud config get-value project)
+   export SA_NAME="cloudgauge-sa"
+   export SA_EMAIL="${SA\_NAME}@${PROJECT\_ID}.iam.gserviceaccount.com"
 
    
 
-   \# \--- Grant Permissions \---
+   # Create the Service Account
+
+   gcloud iam service-accounts create ${SA\_NAME} --display-name="CloudGauge Service Account"
 
    
 
-   \# 1\. Grant ORG-level roles to read assets and policies
+   # \--- Grant Permissions \---
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/browser"
+   
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/cloudasset.viewer"
+   # 1. Grant ORG-level roles to read assets and policies
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/compute.networkViewer"
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/browser"
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/essentialcontacts.viewer"
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/cloudasset.viewer"
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/recommender.iamViewer"
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/compute.networkViewer"
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/logging.viewer"
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/essentialcontacts.viewer"
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/monitoring.viewer"
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/recommender.iamViewer"
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/orgpolicy.policyViewer"
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/logging.viewer"
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/resourcemanager.organizationViewer"
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/monitoring.viewer"
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/servicehealth.viewer"
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/orgpolicy.policyViewer"
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/securitycenter.settingsViewer"
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/resourcemanager.organizationViewer"
 
-   gcloud organizations add-iam-policy-binding ${ORG\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/iam.securityReviewer"
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/servicehealth.viewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/securitycenter.settingsViewer"
+
+   gcloud organizations add-iam-policy-binding ${ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/iam.securityReviewer"
 
    
 
    
 
-   \# 2\. Grant PROJECT-level roles (on the project where Cloud Run is deployed)
+   # 2. Grant PROJECT-level roles (on the project where Cloud Run is deployed)
 
-   gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/aiplatform.user"
+   gcloud projects add-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/aiplatform.user"
 
-   gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/storage.objectCreator"
+   gcloud projects add-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectCreator"
 
-   gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/storage.objectViewer"
+   gcloud projects add-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectViewer"
 
-   gcloud projects add-iam-policy-binding ${PROJECT\_ID} \--member="serviceAccount:${SA\_EMAIL}" \--role="roles/cloudtasks.admin"
+   gcloud projects add-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/cloudtasks.admin"
 
    
 
-   \# 3\. Service Account Token Creator and User role to the SA itself for signed URLs
+   # 3. Service Account Token Creator and User role to the SA itself for signed URLs
 
-   gcloud iam service-accounts add-iam-policy-binding ${SA\_EMAIL} \--member="serviceAccount:${SA\_EMAIL}"  \--role="roles/iam.serviceAccountTokenCreator" 
+   gcloud iam service-accounts add-iam-policy-binding ${SA_EMAIL} --member="serviceAccount:${SA_EMAIL}"  --role="roles/iam.serviceAccountTokenCreator" 
 
-   gcloud iam service-accounts add-iam-policy-binding ${SA\_EMAIL} \--member="serviceAccount:${SA\_EMAIL}"  \--role="roles/iam.serviceAccountUser"
+   gcloud iam service-accounts add-iam-policy-binding ${SA_EMAIL} --member="serviceAccount:${SA_EMAIL}"  --role="roles/iam.serviceAccountUser"
 ```
 3. **Create GCS Bucket**:
 ```
-export BUCKET\_NAME="cloudgauge-reports-${PROJECT\_ID}"
+export BUCKET_NAME="cloudgauge-reports-${PROJECT_ID}"
 
-gsutil mb \-p ${PROJECT\_ID} gs://${BUCKET\_NAME}
+gsutil mb -p ${PROJECT_ID} gs://${BUCKET_NAME}
 ```
 ---
 
@@ -262,48 +262,48 @@ cd cloudgauge
 2. **Set Environment Variables**:  
    * (You should already have `PROJECT_ID` and `SA_EMAIL` from the common setup)
 ```
-     export REGION="asia-south1" \# Or your preferred region  
-     export SERVICE\_NAME="cloudgauge-checker"  
-     export BUCKET\_NAME="cloudgauge-reports-${PROJECT\_ID}"  
-     export QUEUE\_NAME="cloudgauge-scan-queue"
+     export REGION="asia-south1" # Or your preferred region  
+     export SERVICE_NAME="cloudgauge-checker"  
+     export BUCKET_NAME="cloudgauge-reports-${PROJECT_ID}"  
+     export QUEUE_NAME="cloudgauge-scan-queue"
 ```   
 
 3. **Build and Deploy Service (Step 1 of 2\)**:
    * This command builds the container and deploys it without the `WORKER_URL`.
 ```
-\# Build the container image using Cloud Build  
-gcloud builds submit . \--tag "gcr.io/${PROJECT\_ID}/${SERVICE\_NAME}"
+# Build the container image using Cloud Build  
+gcloud builds submit . --tag "gcr.io/${PROJECT_ID}/${SERVICE_NAME}"
 
-\# Deploy to Cloud Run  
-gcloud run deploy ${SERVICE\_NAME} \\  
-  \--image "gcr.io/${PROJECT\_ID}/${SERVICE\_NAME}" \\  
-  \--service-account ${SA\_EMAIL} \\  
-  \--region ${REGION} \\  
-  \--allow-unauthenticated \\  
-  \--platform managed \\  
-  \--timeout=3600 \\  
-\--set-env-vars=PROJECT\_ID=${PROJECT\_ID},TASK\_QUEUE=${QUEUE\_NAME},RESULTS\_BUCKET=${BUCKET\_NAME},SERVICE\_ACCOUNT\_EMAIL=${SA\_EMAIL},LOCATION=${REGION}
+# Deploy to Cloud Run  
+gcloud run deploy ${SERVICE_NAME} \  
+  --image "gcr.io/${PROJECT_ID}/${SERVICE_NAME}" \
+  --service-account ${SA_EMAIL} \
+  --region ${REGION} \
+  --allow-unauthenticated \  
+  --platform managed \
+  --timeout=3600 \
+  --set-env-vars=PROJECT_ID=${PROJECT_ID},TASK\_QUEUE=${QUEUE_NAME},RESULTS_BUCKET=${BUCKET_NAME},SERVICE_ACCOUNT_EMAIL=${SA_EMAIL},LOCATION=${REGION}
 ```
 4. **Grant Invoker Permission**:  
    * Now that the service exists, give its SA permission to invoke it.
 ```
-gcloud run services add-iam-policy-binding ${SERVICE\_NAME} \\  
-  \--member="serviceAccount:${SA\_EMAIL}" \\  
-  \--role="roles/run.invoker" \\  
-  \--region=${REGION}
+gcloud run services add-iam-policy-binding ${SERVICE_NAME} \ 
+  --member="serviceAccount:${SA_EMAIL}" \ 
+  --role="roles/run.invoker" \
+  --region=${REGION}
 ```
 5. **Get Deployed Service URL**:
 ```
-export SERVICE\_URL=$(gcloud run services describe ${SERVICE\_NAME} \--platform managed \--region ${REGION} \--format 'value(status.url)')  
-echo "Service URL is: ${SERVICE\_URL}"
+export SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \--platform managed \--region ${REGION} \--format 'value(status.url)')  
+echo "Service URL is: ${SERVICE_URL}"
 ```
 6. **Update Service with its Own URL (Step 2 of 2\)**:  
    * Update the service to provide it with its own URL, which Cloud Tasks will use.
 ```
-gcloud run services update ${SERVICE\_NAME} \\  
-  \--platform managed \\  
-  \--region ${REGION} \\  
-  \--update-env-vars=WORKER\_URL=${SERVICE\_URL}
+gcloud run services update ${SERVICE_NAME} \
+  --platform managed \
+  --region ${REGION} \ 
+  --update-env-vars=WORKER\_URL=${SERVICE_URL}
 ```
 Your service is now fully deployed and configured\!
 
