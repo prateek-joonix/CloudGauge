@@ -22,6 +22,7 @@ Final results are delivered as an interactive **HTML report** and a **CSV file**
   * [Method 2: Manual Build & Deploy via gcloud](#method-2-manual-build--deploy-via-gcloud)
 * [How to Use](#how-to-use)
 * [Troubleshooting](#troubleshooting)
+* [Cleanup Script](#cleanup-script)
 * [License & Support](#license--support)
 
 ## **Features**
@@ -391,6 +392,93 @@ gcloud run services update cloudgauge-service \
   --timeout=3600 \
   --region=<your-region>
 ```
+
+## **Cleanup Script**
+
+This gCloud script will remove all the resources created by the tool. 
+
+### **Configure Your Variables**
+
+Before running the script, replace the placeholder values in the first few lines with the ones you used during deployment.
+
+```
+#!/bin/bash
+
+# --- CONFIGURE THESE VARIABLES ---
+export YOUR_ORG_ID="123456789012" # Replace with your Organization ID
+export PROJECT_ID="your-gcp-project-id"   # Replace with your Project ID
+export REGION="asia-south1"         # Replace with the region you deployed to
+# --- END CONFIGURATION ---
+
+
+# Set derived variables
+export SERVICE_NAME="cloudgauge-service"
+export QUEUE_NAME="cloudgauge-scan-queue"
+export BUCKET_NAME="cloudgauge-reports-${PROJECT_ID}"
+export SA_NAME="cloudgauge-sa"
+export SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# --- DELETION SCRIPT STARTS HERE ---
+
+echo "--- Starting Cleanup for CloudGauge in project ${PROJECT_ID} ---"
+
+# 1. Delete the Cloud Run service
+echo "Deleting Cloud Run service: ${SERVICE_NAME}..."
+gcloud run services delete ${SERVICE_NAME} --region=${REGION} --platform=managed --quiet
+
+# 2. Delete the Cloud Tasks queue
+echo "Deleting Cloud Tasks queue: ${QUEUE_NAME}..."
+gcloud tasks queues delete ${QUEUE_NAME} --location=${REGION} --quiet
+
+# 3. Delete the GCS bucket and all its contents
+echo "Deleting GCS bucket: gs://${BUCKET_NAME}..."
+gsutil -m rm -r "gs://${BUCKET_NAME}"
+
+# 4. Delete the container image from GCR
+echo "Deleting container image..."
+gcloud container images delete "gcr.io/${PROJECT_ID}/${SERVICE_NAME}" --force-delete-tags --quiet
+
+# 5. Remove all IAM policy bindings for the service account
+echo "Removing IAM bindings for ${SA_EMAIL}..."
+
+# Organization-level roles
+gcloud organizations remove-iam-policy-binding ${YOUR_ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/cloudresourcemanager.organizationViewer" --quiet
+gcloud organizations remove-iam-policy-binding ${YOUR_ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/iam.securityReviewer" --quiet
+gcloud organizations remove-iam-policy-binding ${YOUR_ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/recommender.organizationViewer" --quiet
+gcloud organizations remove-iam-policy-binding ${YOUR_ORG_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/cloudasset.viewer" --quiet
+
+# Project-level roles
+gcloud projects remove-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/cloudtasks.admin" --quiet
+gcloud projects remove-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectAdmin" --quiet
+gcloud projects remove-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/iam.serviceAccountTokenCreator" --quiet
+gcloud projects remove-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/aiplatform.user" --quiet
+gcloud projects remove-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/run.invoker" --quiet # This was added to the SA itself, but good to be explicit
+
+# 6. Delete the Service Account
+echo "🗑️ Deleting service account: ${SA_EMAIL}..."
+gcloud iam service-accounts delete ${SA_EMAIL} --quiet
+
+echo "✅ Cleanup complete!"
+```
+---
+
+### **Step-by-Step Explanation**
+
+Here's a breakdown of what each command in the script does:
+
+1. **Delete Cloud Run Service**: `gcloud run services delete`  
+   * This removes the main web application itself, stopping it from running and incurring costs.  
+2. **Delete Cloud Tasks Queue**: `gcloud tasks queues delete`  
+   * Your script automatically creates a Cloud Tasks queue named `cloudgauge-scan-queue`. This command deletes that queue.  
+3. **Delete GCS Bucket**: `gsutil -m rm -r`  
+   * This command deletes the `cloudgauge-reports-...` bucket and all the HTML/CSV reports stored inside it. The `-m` flag helps it run faster if there are many report files.  
+4. **Delete Container Image**: `gcloud container images delete`  
+   * When you deployed the service, Cloud Build created a container image and stored it in Google Container Registry (GCR). This command deletes that stored image to keep your registry clean.  
+5. **Remove IAM Bindings**: `gcloud ... remove-iam-policy-binding`  
+   * This is a critical step. Before deleting the service account, you should remove all the permissions (roles) you granted it at both the **Organization** and **Project** levels. This prevents "ghost" principals from showing up in your IAM policies.  
+6. **Delete Service Account**: `gcloud iam service-accounts delete`  
+   * This is the final step. After removing its permissions, you can safely delete the `cloudgauge-sa` service account itself.
+
 
 ## **License & Support** 
 
