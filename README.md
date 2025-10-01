@@ -91,7 +91,7 @@ The diagram below illustrates the asynchronous "fire-and-forget" pattern.
 ```mermaid
 graph TD
     subgraph "User Interaction "
-        A[User's Browser] -- "1. Submits Org ID" --> B{Cloud Run Service: /scan};
+        A[User's Browser] -- "1. Submits Org/Folder/Project ID" --> B{Cloud Run Service: /scan};
         B -- "2. Creates Task (milliseconds)" --> C[Cloud Tasks Queue];
         B -- "3. Redirects User" --> G{Status Page};
     end
