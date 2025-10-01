@@ -1,5 +1,14 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
+## Versions
+
+* **Stable (`main` branch):** This is the well-tested, general availability (GA) version of CloudGauge. It supports organization-level scanning with a manual ID input.
+* **Beta (`beta` branch):** This branch contains new and experimental features. The current beta includes:
+    * Scanning for Folders and Projects in addition to Organizations.
+    * A dynamic UI that automatically lists available resources to scan.
+
+**To use the beta version, select the `beta` branch from the dropdown menu at the top of this page before downloading the code.**
+
 # **CloudGauge**
 
 **Note:** This is not an officially supported Google product. This project is not eligible for the [Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).
