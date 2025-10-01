@@ -65,7 +65,7 @@ SA_EMAIL = os.environ.get('SERVICE_ACCOUNT_EMAIL')
 # ---Add a startup check for essential environment variables ---
 def check_environment_variables():
     """Checks for required environment variables at startup."""
-    required_vars = ['PROJECT_ID', 'LOCATION', 'TASK_QUEUE', 'WORKER_URL', 'RESULTS_BUCKET', 'SA_EMAIL']
+    required_vars = ['PROJECT_ID', 'LOCATION', 'TASK_QUEUE', 'WORKER_URL', 'RESULTS_BUCKET', 'SERVICE_ACCOUNT_EMAIL']
     missing_vars = [var for var in required_vars if not os.environ.get(var)]
     if missing_vars:
         error_message = f"FATAL: Missing required environment variables: {', '.join(missing_vars)}"
