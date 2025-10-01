@@ -62,6 +62,22 @@ WORKER_URL = os.environ.get('WORKER_URL')
 RESULTS_BUCKET = os.environ.get('RESULTS_BUCKET')
 SA_EMAIL = os.environ.get('SERVICE_ACCOUNT_EMAIL')
 
+# ---Add a startup check for essential environment variables ---
+def check_environment_variables():
+    """Checks for required environment variables at startup."""
+    required_vars = ['PROJECT_ID', 'LOCATION', 'TASK_QUEUE', 'WORKER_URL', 'RESULTS_BUCKET', 'SERVICE_ACCOUNT_EMAIL']
+    missing_vars = [var for var in required_vars if not os.environ.get(var)]
+    if missing_vars:
+        error_message = f"FATAL: Missing required environment variables: {', '.join(missing_vars)}"
+        logging.critical(error_message)
+        # In a production environment, you might want to raise an exception or exit
+        # For Cloud Run, this will make the deployment fail with a clear log message
+        raise RuntimeError(error_message)
+    else:
+        print("✅ All required environment variables are set.")
+
+check_environment_variables()
+
 # --- GCP Service Clients (Initialized once for efficiency) ---
 tasks_client = tasks_v2.CloudTasksClient()
 storage_client = storage.Client()
