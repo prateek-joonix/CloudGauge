@@ -201,10 +201,6 @@ Follow the **Common Prerequisites** first, then choose **Method 1** or **Method 
 
    gcloud projects add-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/aiplatform.user"
 
-   gcloud projects add-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectCreator"
-
-   gcloud projects add-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectViewer"
-
    gcloud projects add-iam-policy-binding ${PROJECT_ID} --member="serviceAccount:${SA_EMAIL}" --role="roles/cloudtasks.admin"
 
    
@@ -220,6 +216,8 @@ Follow the **Common Prerequisites** first, then choose **Method 1** or **Method 
 export BUCKET_NAME="cloudgauge-reports-${PROJECT_ID}"
 
 gsutil mb -p ${PROJECT_ID} gs://${BUCKET_NAME}
+
+gcloud storage buckets add-iam-policy-binding gs://${BUCKET_NAME} --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectAdmin"
 ```
 ---
 
