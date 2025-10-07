@@ -53,7 +53,7 @@ logging.basicConfig(
 app = Flask(__name__)
 
 # --- Environment Variables & Constants ---
-GCS_PUBLIC_URL = "https://storage.googleapis.com/compliance-bucket-stark/gcp_best_practices.csv"
+GCS_PUBLIC_URL = "https://raw.githubusercontent.com/GoogleCloudPlatform/CloudGauge/Beta/assets/gcp_best_practices.csv"
 SCOPES = ['https://www.googleapis.com/auth/cloud-platform']
 PROJECT_ID = os.environ.get('PROJECT_ID')
 LOCATION = os.environ.get('LOCATION')
