@@ -319,7 +319,7 @@ cd cloudgauge
    * This command builds the container and deploys it without the `WORKER_URL`.
 ```
 # Build the container image using Cloud Build  
-gcloud builds submit . --tag "gcr.io/${PROJECT_ID}/${SERVICE_NAME}"
+gcloud builds submit . --tag "gcr.io/${PROJECT_ID}/${SERVICE_NAME}" --region=${REGION}
 
 # Deploy to Cloud Run  
 gcloud run deploy ${SERVICE_NAME} \  
@@ -357,10 +357,11 @@ Your service is now fully deployed and configured\!
 ## **How to Use** 
 
 1. Navigate to your service's URL (`${SERVICE_URL}`).  
-2. Enter your Google Cloud Organization ID.  
-3. Click "Start Scan".  
-4. You will be redirected to a status page. Wait for the scan to complete (this can take 5-15 minutes depending on org size).  
-5. Once finished, links to the **Interactive HTML Report** and **Download CSV Report** will appear.
+2. Select your Scope from Dropdown menu : Organization, Folder or Project
+3. Select the resource from the Dropdown
+4. Click "Start Scan".  
+5. You will be redirected to a status page. Wait for the scan to complete (this can take 5-15 minutes depending on org size).  
+6. Once finished, links to the **Interactive HTML Report** and **Download CSV Report** will appear.
 
 ## **Troubleshooting**
 
