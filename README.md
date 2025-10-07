@@ -272,12 +272,11 @@ The service needs permission to invoke itself, which is a common pattern when us
 ```
 # Store your service account email in a variable for convenience  
 SA_EMAIL="cloudgauge-sa@your-project-id.iam.gserviceaccount.com"
+SERVICE_NAME="your-chosen-service-name"
 
 # Grant the invoker role 
-gcloud run services add-iam-policy-binding cloudgauge-service \  
-  --member="serviceAccount:${SA_EMAIL}" \ 
-  --role="roles/run.invoker" 
-  --region=asia-south1
+gcloud run services add-iam-policy-binding ${SERVICE_NAME} --member="serviceAccount:${SA_EMAIL}" --role="roles/run.invoker" --region=asia-south1
+
 ```
 ---
 
