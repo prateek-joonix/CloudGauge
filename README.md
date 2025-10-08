@@ -80,22 +80,55 @@ The application follows a robust, scalable, and asynchronous "fire-and-forget" p
 The diagram below illustrates the asynchronous "fire-and-forget" pattern.
 
 ```mermaid
-graph TD
-    subgraph "User Interaction "
-        A[User's Browser] -- "1. Submits Org ID" --> B{Cloud Run Service: /scan};
-        B -- "2. Creates Task (milliseconds)" --> C[Cloud Tasks Queue];
-        B -- "3. Redirects User" --> G{Status Page};
+graph LR
+    %% The diagram is now Left-to-Right for a clearer flow.
+    %% Custom styling has been removed to ensure readability on any background.
+
+    %% Column 1: User
+    subgraph User
+        A[Selects Scan Scope] --> B{Lists Resources};
+        B --> C[Selects Resource ID];
+        C --> D[Submits Form];
     end
 
-    subgraph "Background Processing "
-      direction LR
-      D{Cloud Run Service: /run-scan} -- "5. Runs Checks (Parallel)"--> E[Google Cloud APIs];
-      D -- "6. Uploads Reports" --> F[Cloud Storage Bucket];
+    %% Column 2: The "Frontend" part of the Cloud Run service
+    subgraph Cloud Run - Initial Request
+        D -- "1. POST Request" --> E{Scan Endpoint};
+        E -- "2. Creates Task" --> F[(Cloud Tasks)];
+        E -- "3. Redirects" --> G[Status Page];
+        G -- "7. Polls API" --> H{Status API};
     end
 
-    C -- "4. Invokes Worker" --> D;
-    G -- "7. Polls for Report" --> F;
-    F -- "8. Report Ready" --> G;
+    %% Column 3: The "Backend" part of the Cloud Run service (the worker)
+    subgraph Cloud Run - Background Worker
+        F -- "4. Invokes Worker" --> I{Worker Endpoint};
+        subgraph Worker Process
+            I --> J[1. Init status.json];
+            J --> K{2. Start Parallel Checks};
+            K -- "Dispatches" --> L1[IAM Checks];
+            K -- "Dispatches" --> L2[Cost Checks];
+            K -- "Dispatches" --> L3[...];
+            L1 -- "Writes to" --> M([Local /tmp Files]);
+            L2 -- "Writes to" --> M;
+            L3 -- "Writes to" --> M;
+            M --> N[3. Aggregate Findings];
+            N --> O[4. Generate Reports];
+            O --> P[5. Upload Reports];
+            P --> Q[6. Cleanup tmp Files];
+        end
+    end
+
+    %% Column 4: External Google Cloud Services
+    subgraph External GCP Services
+        L1 -- "queries" --> APIS([Cloud APIs]);
+        L2 -- "queries" --> APIS;
+        L3 -- "queries" --> APIS;
+        
+        H -- "reads" --> GCS_STATUS([status.json in GCS]);
+        K -- "sends progress updates to" --> GCS_STATUS;
+        
+        P -- "writes to" --> GCS_REPORTS([Final Reports in GCS]);
+    end
 ```
 
 ## **Deployment Instructions** 
