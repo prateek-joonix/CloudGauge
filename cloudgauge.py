@@ -778,8 +778,9 @@ def check_project_iam_policy(scope_id, projects, job_id):
         except Exception: pass
         return findings
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        all_findings = [item for sublist in executor.map(check_single_project, projects) for item in sublist]
+    all_findings = []
+    for project in projects:
+        all_findings.extend(check_single_project(project))
     
     if all_findings:
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Action Required"}
@@ -841,8 +842,13 @@ def check_os_config_coverage(scope_id, all_projects, job_id):
         except Exception:
             return False
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        results = [r for r in executor.map(check_single_project, all_projects) if r]
+    results = []
+    for project in all_projects:
+        # check_single_project returns a single dictionary or None
+        finding = check_single_project(project)
+        if finding:
+            # We append the single dictionary to our list of results
+            results.append(finding)
 
     if not results:
         result = {"Check": CHECK_NAME, "Finding": [{"Status": "All unmanaged VMs appear to have OS Config agent."}], "Status": "Compliant"}
@@ -884,8 +890,13 @@ def check_monitoring_coverage(scope_id, all_projects, job_id):
         except Exception: pass
         return issues
         
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        results = [item for sublist in executor.map(check_project, all_projects) for item in sublist]
+    results = []
+    for project in all_projects:
+        # check_project returns a list of findings for the project
+        findings = check_project(project)
+        if findings:
+            # We extend the main results list with the items from the findings list
+            results.extend(findings)
 
     if not results:
         result = {"Check": CHECK_NAME, "Finding": [{"Status": "All projects appear to have key alert policies."}], "Status": "Compliant"}
@@ -1041,8 +1052,10 @@ def run_network_insights(scope_id, all_projects, active_zones, active_regions, j
         return project_findings_map
         
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        project_results_list = list(executor.map(check_project, all_projects))
+    project_results_list = []
+    for project in all_projects:
+        project_results_list.append(check_project(project))
+
     
     # Aggregate results from all projects
     final_findings_by_check = {}
@@ -1088,8 +1101,13 @@ def check_sa_key_rotation(scope_id, all_projects, job_id):
         except Exception: pass
         return findings
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        all_findings = [item for sublist in executor.map(check_project, all_projects) for item in sublist]
+    all_findings = []
+    for project in all_projects:
+        # check_project returns a list of findings for the project
+        findings = check_project(project)
+        if findings:
+            # We extend the main results list with the items from the findings list
+            all_findings.extend(findings)
 
     if all_findings:
         result = {"Check": CHECK_NAME + " (>90 days)", "Finding": all_findings, "Status": "Action Required"}
@@ -1127,8 +1145,11 @@ def check_public_buckets(scope_id, all_projects, job_id):
             pass # Silently fail for projects where API is disabled or permissions lack
         return findings
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        all_findings = [item for sublist in executor.map(check_project, all_projects) for item in sublist]
+    all_findings = []
+    for project in all_projects:
+        findings = check_project(project)
+        if findings:
+            all_findings.extend(findings)
 
     if all_findings:
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Action Required"}
@@ -1182,8 +1203,11 @@ def check_storage_versioning(scope_id, all_projects, job_id):
         except Exception: pass
         return findings
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        all_findings = [item for sublist in executor.map(check_project, all_projects) for item in sublist]
+    all_findings = []
+    for project in all_projects:
+        findings = check_project(project)
+        if findings:
+            all_findings.extend(findings)
 
     if all_findings:
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Action Required"}
@@ -1230,8 +1254,11 @@ def check_standalone_vms(scope_id, all_projects, job_id):
         except Exception: pass
         return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        all_findings = [r for r in executor.map(check_project, all_projects) if r]
+    all_findings = []
+    for project in all_projects:
+        finding = check_project(project)
+        if finding:
+            all_findings.append(finding)
 
     if all_findings:
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Investigation Recommended"}
@@ -1264,8 +1291,11 @@ def check_open_firewall_rules(scope_id, all_projects, job_id):
         except Exception: pass
         return open_rules
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        all_findings = [item for sublist in executor.map(check_project, all_projects) for item in sublist]
+    all_findings = []
+    for project in all_projects:
+        findings = check_project(project)
+        if findings:
+            all_findings.extend(findings)
 
     if all_findings:
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Action Required"}
@@ -1314,8 +1344,11 @@ def check_gke_hygiene(scope_id, all_projects, job_id):
             logging.warning(f"Could not check GKE hygiene for {project_id}: {e}")
         return issues
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        all_findings = [item for sublist in executor.map(check_project, all_projects) for item in sublist]
+    all_findings = []
+    for project in all_projects:
+        findings = check_project(project)
+        if findings:
+            all_findings.extend(findings)
 
     if all_findings:
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Action Required"}
@@ -1497,8 +1530,9 @@ def run_cost_recommendations(scope_id, all_projects, active_zones, active_region
         
         return findings_map
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        project_results_list = list(executor.map(check_project, all_projects))
+    project_results_list = []
+    for project in all_projects:
+        project_results_list.append(check_project(project))
     
     final_findings_by_check = {}
     for project_map in project_results_list:
@@ -1542,8 +1576,11 @@ def run_miscellaneous_checks_refactored(scope, scope_id, all_projects, job_id):
         except Exception: pass
         return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        firewall_findings = [res for res in executor.map(check_firewall_rules_count, all_projects) if res]
+    firewall_findings = []
+    for project in all_projects:
+        finding = check_firewall_rules_count(project)
+        if finding:
+            firewall_findings.append(finding)
 
     if firewall_findings:
         result = {"Check": "VPC Firewall Complexity (>150 Rules)", "Finding": firewall_findings, "Status": "Investigation Recommended"}
@@ -1556,19 +1593,34 @@ def run_miscellaneous_checks_refactored(scope, scope_id, all_projects, job_id):
             recommender_client = recommender_v1.RecommenderClient()
             
             # Check for Org-Level Recent Changes
-            parent = f"organizations/{scope_id}/locations/global/insightTypes/google.cloud.RecentChangeInsight"
-            for insight in recommender_client.list_insights(parent=parent):
+            parent_recent = f"organizations/{scope_id}/locations/global/insightTypes/google.cloud.RecentChangeInsight"
+            api_call_recent = lambda: recommender_client.list_insights(parent=parent_recent)
+            for insight in _call_api_with_backoff(api_call_recent, context_message="Org-Level Recent Changes"):
                 recent_change_findings.append({
                     "Project": f"Org-Level ({scope_id})",
                     "Insight": insight.description
                 })
 
             # Check for Unattended Project Recommendations
-            parent = f"organizations/{scope_id}/locations/global/recommenders/google.resourcemanager.projectUtilization.Recommender"
-            for reco in recommender_client.list_recommendations(parent=parent):
+            parent_unattended = f"organizations/{scope_id}/locations/global/recommenders/google.resourcemanager.projectUtilization.Recommender"
+            api_call_unattended = lambda: recommender_client.list_recommendations(parent=parent_unattended)
+            for reco in _call_api_with_backoff(api_call_unattended, context_message="Unattended Projects"):
                 project_id_from_reco = "Unknown"
-                if hasattr(reco, 'target_resources') and reco.target_resources:
-                    project_id_from_reco = reco.target_resources[0].split('/')[-1]
+                # Method 1: Try the structured targetResources field (camelCase)
+                if hasattr(reco, 'targetResources') and reco.targetResources:
+                    project_id_from_reco = reco.targetResources[0].split('/')[-1]
+
+                # Method 2: Try the operation_groups field (snake_case)
+                elif (hasattr(reco.content, 'operation_groups') and reco.content.operation_groups and
+                      reco.content.operation_groups[0].operations and reco.content.operation_groups[0].operations[0].resource):
+                    project_id_from_reco = reco.content.operation_groups[0].operations[0].resource.split('/')[-1]
+
+                # Method 3: As a final fallback, parse the description string
+                elif reco.description:
+                    match = re.search(r"Project `([^`]+)`", reco.description)
+                    if match:
+                        project_id_from_reco = match.group(1)
+                        
                 unattended_findings.append({"Project": project_id_from_reco, "Recommendation": reco.description})
         except Exception as e:
             # Add a single error message if the org-level API calls fail
@@ -1653,11 +1705,13 @@ def run_service_limit_checks_refactored(scope_id, all_projects, job_id):
             pass 
         return exceeded_quotas # Return the list of findings (will be empty if none)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        # results is a list of lists (e.g., [[proj1-finding], [], [proj3-f1, proj3-f2]])
-        results = executor.map(check_project_quotas, all_projects)
-        # Flatten the list of lists into a single list
-        all_findings = [finding for proj_list in results for finding in proj_list]
+    all_findings = []
+    for project in all_projects:
+        # check_project_quotas returns a list of findings for the project
+        findings = check_project_quotas(project)
+        if findings:
+            # We extend the main list with the items from the returned list
+            all_findings.extend(findings)
 
     print("✅ Service Limit checks complete.")
     
