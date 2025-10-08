@@ -539,7 +539,7 @@ def list_resources():
 
 # --- Helper function for backoff ---
 
-def _call_api_with_backoff(api_call_func):
+def _call_api_with_backoff(api_call_func, context_message="API call"):
     """
     Wraps a Google Cloud API list call with exponential backoff to handle 429 rate limit errors.
 
@@ -564,15 +564,15 @@ def _call_api_with_backoff(api_call_func):
                 # Calculate wait time with exponential backoff and random jitter
                 delay = (initial_delay * (backoff_factor ** attempt)) + random.uniform(0, 1)
                 logging.warning(
-                    f"Rate limit hit (429). Retrying in {delay:.2f} seconds... (Attempt {attempt + 1}/{max_retries})"
+                    f"Rate limit hit (429) for for {context_message}. Retrying in {delay:.2f} seconds... (Attempt {attempt + 1}/{max_retries})"
                 )
                 time.sleep(delay)
             else:
-                logging.error(f"API rate limit exceeded after {max_retries} attempts. Error: {e}")
+                logging.error(f"API rate limit exceeded for {context_message} after {max_retries} attempts. Error: {e}")
                 return [] # Return empty list after final failure
         except Exception as e:
             # For any other error, don't retry, just log it and move on.
-            logging.error(f"An unexpected API error occurred: {e}")
+            logging.error(f"An unexpected API error occurred for {context_message}: {e}")
             return []
     return [] # Should not be reached, but as a fallback
 
@@ -1015,7 +1015,8 @@ def run_network_insights(scope_id, all_projects, active_zones, active_regions, j
                     parent = f"projects/{project_id}/locations/{loc}/insightTypes/{insight_type_id}"
                     try:
                         api_call = lambda: client.list_insights(parent=parent)
-                        for insight in _call_api_with_backoff(api_call):
+                        context = f"'{check_name}' in {project_id} at {loc}"
+                        for insight in _call_api_with_backoff(api_call,context_message=context):
                             parsed_data_list = []
                             try:
                                 insight_dict = Insight.to_dict(insight)
@@ -1480,7 +1481,8 @@ def run_cost_recommendations(scope_id, all_projects, active_zones, active_region
                     parent = f"projects/{project_id}/locations/{loc}/recommenders/{rec_id}"
                     try:
                         api_call = lambda: client.list_recommendations(parent=parent)
-                        for reco in _call_api_with_backoff(api_call):
+                        context = f"'{check}' in {project_id} at {loc}"
+                        for reco in _call_api_with_backoff(api_call, context_message=context):
                             finding = _parse_recommendation_safely(reco, project_id)
                             if check not in findings_map:
                                 findings_map[check] = []
