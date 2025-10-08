@@ -451,8 +451,22 @@ gcloud builds worker-pools create [POOL_NAME] \
     --peered-network=projects/[PROJECT_ID]/global/networks/[VPC_NETWORK]
 ```
   *Replace `[POOL_NAME]`, `[PROJECT_ID]`, `[REGION]`, and `[VPC_NETWORK]` with your specific values.*  
+
+  
     
-  **2\. Grant Network Access (If Needed):** Ensure the private pool has a route to the internet to download packages. The recommended approach is to configure a **Cloud NAT gateway** for your VPC's private subnets. This allows the workers to make outbound requests without needing a public IP address.  
+  **2\. Configure a Secure Egress Route for the Private Pool**
+
+A private pool inside a VPC SC perimeter cannot access public package repositories by default. You need to provide a route to the internet.
+
+**Note:** **Cloud NAT will not work for this use case.** Private pools reside in a separate, Google-managed VPC peered to yours. Cloud NAT does not provide service across a VPC peering connection.
+
+The recommended solution is to use a **dedicated Compute Engine VM as a secure NAT Gateway**.
+
+1. **Create a NAT Gateway VM:** Provision a small Compute Engine VM within your VPC. This VM should have an external IP address and be configured to perform network address translation (masquerading). You can use a startup script to enable IP forwarding and set the necessary iptables rules.  
+2. **Create Custom Routes:** You must create custom routes (or a **Policy-Based Route**) to direct traffic from your private pool's IP range to the NAT gateway VM. This ensures only the build workers' traffic is routed for external access, leaving other resources unaffected.  
+3. **Configure Firewall Rules:** Create VPC firewall rules to:  
+   * Allow **ingress** traffic from the private pool's IP range to the NAT gateway VM.  
+   * Allow **egress** traffic from the NAT gateway VM to the internet (0.0.0.0/0).
     
   **3\. Run Your Build Using the Private Pool:** Modify your `gcloud builds submit` command to include the `--worker-pool` flag, pointing it to your newly created private pool.
 
@@ -463,7 +477,7 @@ gcloud builds submit . \
   --worker-pool=projects/[PROJECT_ID]/locations/[REGION]/workerPools/[POOL_NAME]
 ```
 
-This command now directs Cloud Build to use a worker from your internal pool, keeping all traffic compliant with your VPC SC rules.
+This command now directs Cloud Build to use a worker from your internal pool. The worker's traffic is routed through your secure NAT Gateway VM, allowing it to fetch external dependencies while remaining fully compliant with your VPC SC perimeter.
 
 
 
