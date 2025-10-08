@@ -436,6 +436,7 @@ gcloud run services update cloudgauge-service \
   --timeout=3600 \
   --region=<your-region>
 ```
+---
 
 #### **Builds Fail in a VPC Service Controls Environment**
 
@@ -479,7 +480,7 @@ gcloud builds submit . \
 
 This command now directs Cloud Build to use a worker from your internal pool. The worker's traffic is routed through your secure NAT Gateway VM, allowing it to fetch external dependencies while remaining fully compliant with your VPC SC perimeter.
 
-
+---
 
 ## **Cleanup Script**
 
