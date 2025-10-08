@@ -321,20 +321,21 @@ cd cloudgauge
 gcloud builds submit . --tag "gcr.io/${PROJECT_ID}/${SERVICE_NAME}" --region=${REGION}
 
 # Deploy to Cloud Run  
-gcloud run deploy ${SERVICE_NAME} \  
+gcloud run deploy ${SERVICE_NAME} \
   --image "gcr.io/${PROJECT_ID}/${SERVICE_NAME}" \
   --service-account ${SA_EMAIL} \
   --region ${REGION} \
-  --allow-unauthenticated \  
+  --allow-unauthenticated \
   --platform managed \
   --timeout=3600 \
+  --memory=1Gi \
   --set-env-vars=PROJECT_ID=${PROJECT_ID},TASK_QUEUE=${QUEUE_NAME},RESULTS_BUCKET=${BUCKET_NAME},SERVICE_ACCOUNT_EMAIL=${SA_EMAIL},LOCATION=${REGION}
 ```
 4. **Grant Invoker Permission**:  
    * Now that the service exists, give its SA permission to invoke it.
 ```
-gcloud run services add-iam-policy-binding ${SERVICE_NAME} \ 
-  --member="serviceAccount:${SA_EMAIL}" \ 
+gcloud run services add-iam-policy-binding ${SERVICE_NAME} \
+  --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/run.invoker" \
   --region=${REGION}
 ```
@@ -348,7 +349,7 @@ echo "Service URL is: ${SERVICE_URL}"
 ```
 gcloud run services update ${SERVICE_NAME} \
   --platform managed \
-  --region ${REGION} \ 
+  --region ${REGION} \
   --update-env-vars=WORKER\_URL=${SERVICE_URL}
 ```
 Your service is now fully deployed and configured\!
@@ -390,13 +391,13 @@ If the status page is stuck for a long time, the background worker is likely fai
 * **Solution**: You need to increase the memory allocated to your service.  
   * **Via Console**:  
     1. Click **"Edit & Deploy New Revision"** on your Cloud Run service page.  
-    2. Under the "General" tab, find **"Memory allocation"** and increase it (e.g., to `1 GiB`).  
+    2. Under the "General" tab, find **"Memory allocation"** and increase it (e.g., to `2 GiB`).  
     3. Click **Deploy**.  
   * **Via gcloud CLI**:
 
 ```
 gcloud run services update cloudgauge-service \
-  --memory=1Gi \
+  --memory=2Gi \
   --region=<your-region>
 ```
     
@@ -479,6 +480,61 @@ gcloud builds submit . \
 ```
 
 This command now directs Cloud Build to use a worker from your internal pool. The worker's traffic is routed through your secure NAT Gateway VM, allowing it to fetch external dependencies while remaining fully compliant with your VPC SC perimeter.
+
+---
+
+### **Forcing Image Storage to a Specific Region**
+
+**Symptom:** You need to store your container images in a specific Google Cloud region (e.g., asia-south1 for organization policy resource location constraints), but by default, gcr.io hosts images in multi-regional locations (us, eu, asia) and does not offer specific regional control.
+
+**Cause:** Google Container Registry (gcr.io) is a multi-regional service. To gain fine-grained control over the storage location of your images, you should use **Artifact Registry**, which is Google Cloud's recommended service for managing container images and language packages.
+
+**Solution:** Create a Docker repository in Artifact Registry in your desired region and update your build commands to point to the new regional endpoint.
+
+
+**Step 1: Create a Regional Artifact Registry Repository**
+
+First, create a new Docker-format repository in your chosen region. This example uses asia-south1 (Mumbai).
+
+```
+gcloud artifacts repositories create cloudgauge-repo \ 
+    --repository-format=docker \
+    --location=asia-south1 \
+    --description="CloudGauge Docker repository in Mumbai"
+```
+
+*You only need to run this command once to set up the repository.*
+
+
+**Step 2: Update Your Build and Push Commands**
+
+Next, you must change the image path in your build and push commands from gcr.io/... to the new Artifact Registry path. The new format is \[REGION\]-docker.pkg.dev/\[PROJECT\_ID\]/\[REPO\_NAME\]/\[IMAGE\_NAME\].
+
+#### **Option A: Using Cloud Build**
+
+If you're using Cloud Build, update the \--tag flag in your gcloud builds submit command:
+
+```
+gcloud builds submit . --tag "asia-south1-docker.pkg.dev/[PROJECT_ID]/cloudgauge-repo/[SERVICE_NAME]"
+```
+
+#### **Option B: Pushing a Local Image**
+
+If you are building your image locally, update your docker tag and docker push commands:
+
+\# 1\. Build the image 
+```
+docker build -t cloudgauge-image .
+```
+\# 2\. Tag the image for your new Artifact Registry repo 
+```
+docker tag cloudgauge-image asia-south1-docker.pkg.dev/[PROJECT_ID]/cloudgauge-repo/cloudgauge-image
+```
+\# 3\. Push the image  
+```
+docker push asia-south1-docker.pkg.dev/[PROJECT_ID]/cloudgauge-repo/cloudgauge-image
+```
+By following these steps, you can ensure your container images are stored and managed in the specific Google Cloud region that meets your requirements.
 
 ---
 
