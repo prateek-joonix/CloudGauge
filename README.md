@@ -399,9 +399,7 @@ gcloud run services update cloudgauge-service \
   --memory=1Gi \
   --region=<your-region>
 ```
-
     
-
 ---
 
 #### **Permission Denied on Google Cloud APIs**
@@ -438,6 +436,36 @@ gcloud run services update cloudgauge-service \
   --timeout=3600 \
   --region=<your-region>
 ```
+
+#### **Builds Fail in a VPC Service Controls Environment**
+
+* **Symptom:** When running a Cloud Build, the process fails during steps that require fetching external packages (e.g., `pip install`, `apt-get update`, or `npm install`). You may see timeout errors or messages related to network connectivity and egress being blocked.  
+* **Cause:** By default, Cloud Build runs on workers in a Google-managed project that is outside your organization's VPC Service Controls (VPC SC) perimeter. Your perimeter is correctly blocking egress traffic from these external workers, preventing them from accessing public repositories to download dependencies.  
+* **Solution:** Use **Cloud Build private pools**. This provisions dedicated build workers that run *inside* your own VPC network, making all build traffic internal and compliant with your security perimeter.  
+    
+  **1\. Create a Private Pool in Your VPC:** First, create a private worker pool connected to your VPC network. This ensures all build steps are executed within your perimeter.
+```
+gcloud builds worker-pools create [POOL_NAME] \
+    --project=[PROJECT_ID] \
+    --region=[REGION] \
+    --peered-network=projects/[PROJECT_ID]/global/networks/[VPC_NETWORK]
+```
+  *Replace `[POOL_NAME]`, `[PROJECT_ID]`, `[REGION]`, and `[VPC_NETWORK]` with your specific values.*  
+    
+  **2\. Grant Network Access (If Needed):** Ensure the private pool has a route to the internet to download packages. The recommended approach is to configure a **Cloud NAT gateway** for your VPC's private subnets. This allows the workers to make outbound requests without needing a public IP address.  
+    
+  **3\. Run Your Build Using the Private Pool:** Modify your `gcloud builds submit` command to include the `--worker-pool` flag, pointing it to your newly created private pool.
+
+```
+gcloud builds submit . \
+  --tag "gcr.io/[PROJECT_ID]/[SERVICE_NAME]" \
+  --region=[REGION] \
+  --worker-pool=projects/[PROJECT_ID]/locations/[REGION]/workerPools/[POOL_NAME]
+```
+
+This command now directs Cloud Build to use a worker from your internal pool, keeping all traffic compliant with your VPC SC rules.
+
+
 
 ## **Cleanup Script**
 
