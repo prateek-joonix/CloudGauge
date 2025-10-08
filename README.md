@@ -463,7 +463,7 @@ A private pool inside a VPC SC perimeter cannot access public package repositori
 The recommended solution is to use a **dedicated Compute Engine VM as a secure NAT Gateway**.
 
 1. **Create a NAT Gateway VM:** Provision a small Compute Engine VM within your VPC. This VM should have an external IP address and be configured to perform network address translation (masquerading). You can use a startup script to enable IP forwarding and set the necessary iptables rules.  
-2. **Create Custom Routes:** You must create custom routes (or a **Policy-Based Route**) to direct traffic from your private pool's IP range to the NAT gateway VM. This ensures only the build workers' traffic is routed for external access, leaving other resources unaffected.  
+2. **Create Custom Routes:** You must create custom routes to direct traffic from your private pool's IP range to the NAT gateway VM. This ensures only the build workers' traffic is routed for external access, leaving other resources unaffected.  
 3. **Configure Firewall Rules:** Create VPC firewall rules to:  
    * Allow **ingress** traffic from the private pool's IP range to the NAT gateway VM.  
    * Allow **egress** traffic from the NAT gateway VM to the internet (0.0.0.0/0).
