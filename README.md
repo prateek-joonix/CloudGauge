@@ -144,7 +144,7 @@ Follow the **Common Prerequisites** first, then choose **Method 1** or **Method 
 
    export PROJECT_ID=$(gcloud config get-value project)
    export SA_NAME="cloudgauge-sa"
-   export SA_EMAIL="${SA\_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+   export SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
    
 
@@ -328,7 +328,7 @@ gcloud run deploy ${SERVICE_NAME} \
   --allow-unauthenticated \  
   --platform managed \
   --timeout=3600 \
-  --set-env-vars=PROJECT_ID=${PROJECT_ID},TASK\_QUEUE=${QUEUE_NAME},RESULTS_BUCKET=${BUCKET_NAME},SERVICE_ACCOUNT_EMAIL=${SA_EMAIL},LOCATION=${REGION}
+  --set-env-vars=PROJECT_ID=${PROJECT_ID},TASK_QUEUE=${QUEUE_NAME},RESULTS_BUCKET=${BUCKET_NAME},SERVICE_ACCOUNT_EMAIL=${SA_EMAIL},LOCATION=${REGION}
 ```
 4. **Grant Invoker Permission**:  
    * Now that the service exists, give its SA permission to invoke it.
@@ -340,7 +340,7 @@ gcloud run services add-iam-policy-binding ${SERVICE_NAME} \
 ```
 5. **Get Deployed Service URL**:
 ```
-export SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \--platform managed \--region ${REGION} \--format 'value(status.url)')  
+export SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} --platform managed --region ${REGION} --format 'value(status.url)')  
 echo "Service URL is: ${SERVICE_URL}"
 ```
 6. **Update Service with its Own URL (Step 2 of 2\)**:  
