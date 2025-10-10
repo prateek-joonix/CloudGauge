@@ -2,10 +2,27 @@
 
 ## Versions
 
-* **Stable (`main` branch):** This is the well-tested, general availability (GA) version of CloudGauge. It supports organization-level scanning with a manual ID input.
-* **Beta (`beta` branch):** This branch contains new and experimental features. The current beta includes:
-    * Scanning for Folders and Projects in addition to Organizations.
-    * A dynamic UI that automatically lists available resources to scan.
+This repository contains two primary versions of CloudGauge:
+
+1. **GA Version - `main` branch (cloudgauge.py):** The stable, general availability version. It's a simple, single-process tool ideal for scanning single projects, folders, or small organizations.  
+2. **Beta Version - `beta` branch (cloudgauge_beta.py):** An advanced, highly scalable version designed for performance in large enterprise environments with hundreds of projects.
+
+### **Key Differences Between Versions**
+
+The primary enhancement in the Beta version is a complete architectural redesign to support large-scale scanning through a **dispatcher and fan-out model**.
+
+| Feature | GA Version  | Beta Version  |
+| :---- | :---- | :---- |
+| **Architecture** | **Monolithic Worker** | **Dispatcher & Fan-Out Workers** |
+|  | A single Cloud Run instance is tasked with iterating through all projects and executing all checks sequentially within that instance. | An initial "dispatcher" worker fans out the work, creating one dedicated Cloud Task and Cloud Run instance *per project*. |
+| **Execution Flow** | **Single-Phase** | **Multi-Phase (Asynchronous)** |
+|  | The /run-scan worker performs all tasks: lists projects, runs checks, aggregates results, and generates the final report in one continuous process. | **1\. Dispatch:** The /run-scan worker acts as a dispatcher. **2\. Parallel Scan:** Dozens or hundreds of /scan-project workers execute checks in parallel. **3\. Aggregate:** A final /run-aggregation worker is triggered by the user to combine all results and generate the report. |
+| **Scalability** | **Limited.** Best for smaller scopes. The entire scan must complete within the 60-minute Cloud Run timeout. Performance degrades with a higher project count. | **Highly Scalable.** The parallel, per-project architecture allows the tool to handle thousands of projects efficiently without being constrained by a single instance timeout. |
+| **Data Handling** | Writes one intermediate result file per **check type** (e.g., Public\_GCS\_Buckets.json). All findings for that check across all projects are in one file. | Writes one intermediate result file per **check per project** (e.g., project-a/Public\_GCS\_Buckets.json, project-b/Public\_GCS\_Buckets.json). This prevents race conditions and enables parallel processing. |
+| **Status Reporting** | A simple, linear progress bar that tracks the completion of check *types*. | An advanced, multi-stage UI. It first tracks the completion percentage of individual *project scans*. Once all projects are scanned, the UI updates to a "Ready to Aggregate" state, allowing the user to trigger the final report generation. |
+| **Code Structure** | Check functions (e.g., check\_public\_buckets) are designed to accept and loop through a list of all projects. | Check functions are refactored to operate on a **single project ID** at a time, making them suitable for the per-project worker model. |
+
+In summary, the **Beta version** is purpose-built for enterprise-scale environments where performance and the ability to scan thousands of resources are critical. The **GA version** remains an excellent, easy-to-deploy tool for individuals or teams focused on smaller-scale reviews.
 
 **To use the beta version, select the `beta` branch from the dropdown menu at the top of this page before downloading the code.**
 
