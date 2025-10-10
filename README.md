@@ -290,13 +290,17 @@ Now, let's create the initial Cloud Run service and connect it to your new repos
      * `LOCATION`: The region you selected (e.g., `asia-south1`)  
 10. Click **Create**. The service will start building and deploying.
 
-**Note:** The application logs might show errors at this stage. This is normal because the `WORKER_URL` is missing.
-
 ---
 
-### **Step 3: Grant Invocation Permissions** 
+### **Step 3: Grant Required IAM Roles** 
 
-The service needs permission to invoke itself, which is a common pattern when using Cloud Tasks to trigger background work.
+The service account needs two key permissions to function correctly. You can grant these permissions after the first deployment is complete.
+
+**Cloud Run Invoker (roles/run.invoker)**: This role is required to allow the Cloud Tasks service to securely trigger your CloudGauge service to start a scan. This permission is granted specifically on the new Cloud Run service you just deployed.
+
+**Cloud Run Viewer (roles/run.viewer)**: This role allows the service to automatically discover its own public URL when it starts up. This feature enables a single-step deployment, removing the need to manually update the service with its own URL. This permission is granted at the service level.
+
+By granting both roles at the service level, you ensure the service account only has the minimum permissions required on the specific resource it needs to access.
 
 1. Once the service is created, find its URL on the Cloud Run details page.  
 2. Open the **Cloud Shell** or your local terminal with `gcloud` configured.  
@@ -306,26 +310,16 @@ The service needs permission to invoke itself, which is a common pattern when us
 # Store your service account email in a variable for convenience  
 SA_EMAIL="cloudgauge-sa@your-project-id.iam.gserviceaccount.com"
 SERVICE_NAME="your-chosen-service-name"
+export REGION="asia-south1" # Or your chosen region
 
-# Grant the invoker role 
-gcloud run services add-iam-policy-binding ${SERVICE_NAME} --member="serviceAccount:${SA_EMAIL}" --role="roles/run.invoker" --region=asia-south1
+# Grants permission to be invoked by Cloud Tasks
+gcloud run services add-iam-policy-binding ${SERVICE_NAME} --member="serviceAccount:${SA_EMAIL}" --role="roles/run.invoker" --region=${REGION}
+
+# Grants permission to view its own service details to find its URL
+gcloud run services add-iam-policy-binding ${SERVICE_NAME} --member="serviceAccount:${SA_EMAIL}" --role="roles/run.viewer" --region=${REGION}
 
 ```
----
-
-### **Step 4: Update the Service with the Final URL (Second Deployment)** 
-
-Finally, deploy a new revision with the missing environment variable.
-
-1. Go back to your service's page in the Cloud Run console.  
-2. Copy the **URL** shown at the top of the page. It will look something like `https://cloudgauge-service-xxxxxxxxxx-as.a.run.app`.  
-3. Click **Edit & Deploy New Revision**.  
-4. Navigate to the **Variables & Secrets** tab again.  
-5. Click **Add Variable** and add the final required variable:  
-   * `WORKER_URL`: Paste the URL you just copied.  
-6. Click **Deploy**.
-
-After this second deployment finishes, your CloudGauge service will be fully configured and operational\!
+With these permissions set, your CloudGauge instance is fully deployed and ready to use. You can now proceed to the application's URL to start your first scan.
 
 ---
 
@@ -347,8 +341,8 @@ cd cloudgauge
      export QUEUE_NAME="cloudgauge-scan-queue"
 ```   
 
-3. **Build and Deploy Service (Step 1 of 2\)**:
-   * This command builds the container and deploys it without the `WORKER_URL`.
+3. **Build and Deploy Service **:
+   * This command builds the container and deploys it.
 ```
 # Build the container image using Cloud Build  
 gcloud builds submit . --tag "gcr.io/${PROJECT_ID}/${SERVICE_NAME}" --region=${REGION}
@@ -364,27 +358,20 @@ gcloud run deploy ${SERVICE_NAME} \
   --memory=1Gi \
   --set-env-vars=PROJECT_ID=${PROJECT_ID},TASK_QUEUE=${QUEUE_NAME},RESULTS_BUCKET=${BUCKET_NAME},SERVICE_ACCOUNT_EMAIL=${SA_EMAIL},LOCATION=${REGION}
 ```
-4. **Grant Invoker Permission**:  
+4. **Grant Invoker & Viewer Permission**:  
    * Now that the service exists, give its SA permission to invoke it.
 ```
 gcloud run services add-iam-policy-binding ${SERVICE_NAME} \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/run.invoker" \
   --region=${REGION}
+
+gcloud run services add-iam-policy-binding ${SERVICE_NAME} \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/run.viewer" \
+  --region=${REGION}
 ```
-5. **Get Deployed Service URL**:
-```
-export SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} --platform managed --region ${REGION} --format 'value(status.url)')  
-echo "Service URL is: ${SERVICE_URL}"
-```
-6. **Update Service with its Own URL (Step 2 of 2\)**:  
-   * Update the service to provide it with its own URL, which Cloud Tasks will use.
-```
-gcloud run services update ${SERVICE_NAME} \
-  --platform managed \
-  --region ${REGION} \
-  --update-env-vars=WORKER\_URL=${SERVICE_URL}
-```
+
 Your service is now fully deployed and configured\!
 
 ## **How to Use** 
