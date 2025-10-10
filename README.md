@@ -26,6 +26,7 @@ In summary, the **Beta version** is purpose-built for enterprise-scale environme
 
 **To use the beta version, select the `beta` branch from the dropdown menu at the top of this page before downloading the code.**
 
+
 # **CloudGauge**
 
 **Note:** This is not an officially supported Google product. This project is not eligible for the [Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).
@@ -106,22 +107,55 @@ The application follows a robust, scalable, and asynchronous "fire-and-forget" p
 The diagram below illustrates the asynchronous "fire-and-forget" pattern.
 
 ```mermaid
-graph TD
-    subgraph "User Interaction "
-        A[User's Browser] -- "1. Submits Org/Folder/Project ID" --> B{Cloud Run Service: /scan};
-        B -- "2. Creates Task (milliseconds)" --> C[Cloud Tasks Queue];
-        B -- "3. Redirects User" --> G{Status Page};
+graph LR
+    %% The diagram is now Left-to-Right for a clearer flow.
+    %% Custom styling has been removed to ensure readability on any background.
+
+    %% Column 1: User
+    subgraph User
+        A[Selects Scan Scope] --> B{Lists Resources};
+        B --> C[Selects Resource ID];
+        C --> D[Submits Form];
     end
 
-    subgraph "Background Processing "
-      direction LR
-      D{Cloud Run Service: /run-scan} -- "5. Runs Checks (Parallel)"--> E[Google Cloud APIs];
-      D -- "6. Uploads Reports" --> F[Cloud Storage Bucket];
+    %% Column 2: The "Frontend" part of the Cloud Run service
+    subgraph Cloud Run - Initial Request
+        D -- "1. POST Request" --> E{Scan Endpoint};
+        E -- "2. Creates Task" --> F[(Cloud Tasks)];
+        E -- "3. Redirects" --> G[Status Page];
+        G -- "7. Polls API" --> H{Status API};
     end
 
-    C -- "4. Invokes Worker" --> D;
-    G -- "7. Polls for Report" --> F;
-    F -- "8. Report Ready" --> G;
+    %% Column 3: The "Backend" part of the Cloud Run service (the worker)
+    subgraph Cloud Run - Background Worker
+        F -- "4. Invokes Worker" --> I{Worker Endpoint};
+        subgraph Worker Process
+            I --> J[1. Init status.json];
+            J --> K{2. Start Parallel Checks};
+            K -- "Dispatches" --> L1[IAM Checks];
+            K -- "Dispatches" --> L2[Cost Checks];
+            K -- "Dispatches" --> L3[...];
+            L1 -- "Writes to" --> M([Local /tmp Files]);
+            L2 -- "Writes to" --> M;
+            L3 -- "Writes to" --> M;
+            M --> N[3. Aggregate Findings];
+            N --> O[4. Generate Reports];
+            O --> P[5. Upload Reports];
+            P --> Q[6. Cleanup tmp Files];
+        end
+    end
+
+    %% Column 4: External Google Cloud Services
+    subgraph External GCP Services
+        L1 -- "queries" --> APIS([Cloud APIs]);
+        L2 -- "queries" --> APIS;
+        L3 -- "queries" --> APIS;
+        
+        H -- "reads" --> GCS_STATUS([status.json in GCS]);
+        K -- "sends progress updates to" --> GCS_STATUS;
+        
+        P -- "writes to" --> GCS_REPORTS([Final Reports in GCS]);
+    end
 ```
 
 ## **Deployment Instructions** 
@@ -170,7 +204,7 @@ Follow the **Common Prerequisites** first, then choose **Method 1** or **Method 
 
    export PROJECT_ID=$(gcloud config get-value project)
    export SA_NAME="cloudgauge-sa"
-   export SA_EMAIL="${SA\_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+   export SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
    
 
@@ -283,43 +317,34 @@ Now, let's create the initial Cloud Run service and connect it to your new repos
      * `LOCATION`: The region you selected (e.g., `asia-south1`)  
 10. Click **Create**. The service will start building and deploying.
 
-**Note:** The application logs might show errors at this stage. This is normal because the `WORKER_URL` is missing.
-
 ---
 
-### **Step 3: Grant Invocation Permissions** 
+### **Step 3: Grant Required IAM Roles** 
 
-The service needs permission to invoke itself, which is a common pattern when using Cloud Tasks to trigger background work.
+To function correctly, the service account needs two key permissions granted directly on the Cloud Run service itself. This ensures all permissions are tightly scoped and follow security best practices.
 
-1. Once the service is created, find its URL on the Cloud Run details page.  
-2. Open the **Cloud Shell** or your local terminal with `gcloud` configured.  
-3. Run the following command, replacing the placeholders with your actual service name, service account email, and region.
+**Cloud Run Invoker (roles/run.invoker)**: This role is required to allow the Cloud Tasks service to securely trigger your CloudGauge service to start a scan. This permission is granted specifically on the new Cloud Run service you just deployed.
+
+**Cloud Run Viewer (roles/run.viewer)**: This role allows the service to automatically discover its own public URL when it starts up. This feature enables a single-step deployment, removing the need to manually update the service with its own URL. This permission is granted at the service level.
+
+By granting both roles at the **service level**, you ensure the service account only has the minimum permissions required on the specific resource it needs to access.
+
+Open the **Cloud Shell** or your local terminal with `gCloud` installed and run the following commands, replacing the placeholders with your values.
 
 ```
 # Store your service account email in a variable for convenience  
 SA_EMAIL="cloudgauge-sa@your-project-id.iam.gserviceaccount.com"
+SERVICE_NAME="your-chosen-service-name"
+export REGION="asia-south1" # Or your chosen region
 
-# Grant the invoker role 
-gcloud run services add-iam-policy-binding cloudgauge-service \  
-  --member="serviceAccount:${SA_EMAIL}" \ 
-  --role="roles/run.invoker" 
-  --region=asia-south1
+# Grants permission to be invoked by Cloud Tasks
+gcloud run services add-iam-policy-binding ${SERVICE_NAME} --member="serviceAccount:${SA_EMAIL}" --role="roles/run.invoker" --region=${REGION}
+
+# Grants permission to view its own service details to find its URL
+gcloud run services add-iam-policy-binding ${SERVICE_NAME} --member="serviceAccount:${SA_EMAIL}" --role="roles/run.viewer" --region=${REGION}
+
 ```
----
-
-### **Step 4: Update the Service with the Final URL (Second Deployment)** 
-
-Finally, deploy a new revision with the missing environment variable.
-
-1. Go back to your service's page in the Cloud Run console.  
-2. Copy the **URL** shown at the top of the page. It will look something like `https://cloudgauge-service-xxxxxxxxxx-as.a.run.app`.  
-3. Click **Edit & Deploy New Revision**.  
-4. Navigate to the **Variables & Secrets** tab again.  
-5. Click **Add Variable** and add the final required variable:  
-   * `WORKER_URL`: Paste the URL you just copied.  
-6. Click **Deploy**.
-
-After this second deployment finishes, your CloudGauge service will be fully configured and operational\!
+With these permissions set, your CloudGauge instance is fully deployed and ready to use. You can now proceed to the application's URL to start your first scan.
 
 ---
 
@@ -341,52 +366,47 @@ cd cloudgauge
      export QUEUE_NAME="cloudgauge-scan-queue"
 ```   
 
-3. **Build and Deploy Service (Step 1 of 2\)**:
-   * This command builds the container and deploys it without the `WORKER_URL`.
+3. **Build and Deploy Service **:
+   * This command builds the container and deploys it.
 ```
 # Build the container image using Cloud Build  
-gcloud builds submit . --tag "gcr.io/${PROJECT_ID}/${SERVICE_NAME}"
+gcloud builds submit . --tag "gcr.io/${PROJECT_ID}/${SERVICE_NAME}" --region=${REGION}
 
 # Deploy to Cloud Run  
-gcloud run deploy ${SERVICE_NAME} \  
+gcloud run deploy ${SERVICE_NAME} \
   --image "gcr.io/${PROJECT_ID}/${SERVICE_NAME}" \
   --service-account ${SA_EMAIL} \
   --region ${REGION} \
-  --allow-unauthenticated \  
+  --allow-unauthenticated \
   --platform managed \
   --timeout=3600 \
-  --set-env-vars=PROJECT_ID=${PROJECT_ID},TASK\_QUEUE=${QUEUE_NAME},RESULTS_BUCKET=${BUCKET_NAME},SERVICE_ACCOUNT_EMAIL=${SA_EMAIL},LOCATION=${REGION}
+  --memory=1Gi \
+  --set-env-vars=PROJECT_ID=${PROJECT_ID},TASK_QUEUE=${QUEUE_NAME},RESULTS_BUCKET=${BUCKET_NAME},SERVICE_ACCOUNT_EMAIL=${SA_EMAIL},LOCATION=${REGION}
 ```
-4. **Grant Invoker Permission**:  
+4. **Grant Invoker & Viewer Permission**:  
    * Now that the service exists, give its SA permission to invoke it.
 ```
-gcloud run services add-iam-policy-binding ${SERVICE_NAME} \ 
-  --member="serviceAccount:${SA_EMAIL}" \ 
+gcloud run services add-iam-policy-binding ${SERVICE_NAME} \
+  --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/run.invoker" \
   --region=${REGION}
+
+gcloud run services add-iam-policy-binding ${SERVICE_NAME} \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/run.viewer" \
+  --region=${REGION}
 ```
-5. **Get Deployed Service URL**:
-```
-export SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \--platform managed \--region ${REGION} \--format 'value(status.url)')  
-echo "Service URL is: ${SERVICE_URL}"
-```
-6. **Update Service with its Own URL (Step 2 of 2\)**:  
-   * Update the service to provide it with its own URL, which Cloud Tasks will use.
-```
-gcloud run services update ${SERVICE_NAME} \
-  --platform managed \
-  --region ${REGION} \ 
-  --update-env-vars=WORKER\_URL=${SERVICE_URL}
-```
+
 Your service is now fully deployed and configured\!
 
 ## **How to Use** 
 
 1. Navigate to your service's URL (`${SERVICE_URL}`).  
-2. Enter your Google Cloud Organization ID.  
-3. Click "Start Scan".  
-4. You will be redirected to a status page. Wait for the scan to complete (this can take 5-15 minutes depending on org size).  
-5. Once finished, links to the **Interactive HTML Report** and **Download CSV Report** will appear.
+2. Select your Scope from Dropdown menu : Organization, Folder or Project
+3. Select the resource from the Dropdown
+4. Click "Start Scan".  
+5. You will be redirected to a status page. Wait for the scan to complete (this can take 5-15 minutes depending on org size).  
+6. Once finished, links to the **Interactive HTML Report** and **Download CSV Report** will appear.
 
 ## **Troubleshooting**
 
@@ -416,18 +436,16 @@ If the status page is stuck for a long time, the background worker is likely fai
 * **Solution**: You need to increase the memory allocated to your service.  
   * **Via Console**:  
     1. Click **"Edit & Deploy New Revision"** on your Cloud Run service page.  
-    2. Under the "General" tab, find **"Memory allocation"** and increase it (e.g., to `1 GiB`).  
+    2. Under the "General" tab, find **"Memory allocation"** and increase it (e.g., to `2 GiB`).  
     3. Click **Deploy**.  
   * **Via gcloud CLI**:
 
 ```
 gcloud run services update cloudgauge-service \
-  --memory=1Gi \
+  --memory=2Gi \
   --region=<your-region>
 ```
-
     
-
 ---
 
 #### **Permission Denied on Google Cloud APIs**
@@ -464,6 +482,106 @@ gcloud run services update cloudgauge-service \
   --timeout=3600 \
   --region=<your-region>
 ```
+---
+
+#### **Builds Fail in a VPC Service Controls Environment**
+
+* **Symptom:** When running a Cloud Build, the process fails during steps that require fetching external packages (e.g., `pip install`, `apt-get update`, or `npm install`). You may see timeout errors or messages related to network connectivity and egress being blocked.  
+* **Cause:** By default, Cloud Build runs on workers in a Google-managed project that is outside your organization's VPC Service Controls (VPC SC) perimeter. Your perimeter is correctly blocking egress traffic from these external workers, preventing them from accessing public repositories to download dependencies.  
+* **Solution:** Use **Cloud Build private pools**. This provisions dedicated build workers that run *inside* your own VPC network, making all build traffic internal and compliant with your security perimeter.  
+    
+  **1\. Create a Private Pool in Your VPC:** First, create a private worker pool connected to your VPC network. This ensures all build steps are executed within your perimeter.
+```
+gcloud builds worker-pools create [POOL_NAME] \
+    --project=[PROJECT_ID] \
+    --region=[REGION] \
+    --peered-network=projects/[PROJECT_ID]/global/networks/[VPC_NETWORK]
+```
+  *Replace `[POOL_NAME]`, `[PROJECT_ID]`, `[REGION]`, and `[VPC_NETWORK]` with your specific values.*  
+
+  
+    
+  **2\. Configure a Secure Egress Route for the Private Pool**
+
+A private pool inside a VPC SC perimeter cannot access public package repositories by default. You need to provide a route to the internet.
+
+**Note:** **Cloud NAT will not work for this use case.** Private pools reside in a separate, Google-managed VPC peered to yours. Cloud NAT does not provide service across a VPC peering connection.
+
+The recommended solution is to use a **dedicated Compute Engine VM as a secure NAT Gateway**.
+
+1. **Create a NAT Gateway VM:** Provision a small Compute Engine VM within your VPC. This VM should have an external IP address and be configured to perform network address translation (masquerading). You can use a startup script to enable IP forwarding and set the necessary iptables rules.  
+2. **Create Custom Routes:** You must create custom routes to direct traffic from your private pool's IP range to the NAT gateway VM. This ensures only the build workers' traffic is routed for external access, leaving other resources unaffected.  
+3. **Configure Firewall Rules:** Create VPC firewall rules to:  
+   * Allow **ingress** traffic from the private pool's IP range to the NAT gateway VM.  
+   * Allow **egress** traffic from the NAT gateway VM to the internet (0.0.0.0/0).
+    
+  **3\. Run Your Build Using the Private Pool:** Modify your `gcloud builds submit` command to include the `--worker-pool` flag, pointing it to your newly created private pool.
+
+```
+gcloud builds submit . \
+  --tag "gcr.io/[PROJECT_ID]/[SERVICE_NAME]" \
+  --region=[REGION] \
+  --worker-pool=projects/[PROJECT_ID]/locations/[REGION]/workerPools/[POOL_NAME]
+```
+
+This command now directs Cloud Build to use a worker from your internal pool. The worker's traffic is routed through your secure NAT Gateway VM, allowing it to fetch external dependencies while remaining fully compliant with your VPC SC perimeter.
+
+---
+
+### **Forcing Image Storage to a Specific Region**
+
+**Symptom:** You need to store your container images in a specific Google Cloud region (e.g., asia-south1 for organization policy resource location constraints), but by default, gcr.io hosts images in multi-regional locations (us, eu, asia) and does not offer specific regional control.
+
+**Cause:** Google Container Registry (gcr.io) is a multi-regional service. To gain fine-grained control over the storage location of your images, you should use **Artifact Registry**, which is Google Cloud's recommended service for managing container images and language packages.
+
+**Solution:** Create a Docker repository in Artifact Registry in your desired region and update your build commands to point to the new regional endpoint.
+
+
+**Step 1: Create a Regional Artifact Registry Repository**
+
+First, create a new Docker-format repository in your chosen region. This example uses asia-south1 (Mumbai).
+
+```
+gcloud artifacts repositories create cloudgauge-repo \ 
+    --repository-format=docker \
+    --location=asia-south1 \
+    --description="CloudGauge Docker repository in Mumbai"
+```
+
+*You only need to run this command once to set up the repository.*
+
+
+**Step 2: Update Your Build and Push Commands**
+
+Next, you must change the image path in your build and push commands from gcr.io/... to the new Artifact Registry path. The new format is \[REGION\]-docker.pkg.dev/\[PROJECT\_ID\]/\[REPO\_NAME\]/\[IMAGE\_NAME\].
+
+#### **Option A: Using Cloud Build**
+
+If you're using Cloud Build, update the \--tag flag in your gcloud builds submit command:
+
+```
+gcloud builds submit . --tag "asia-south1-docker.pkg.dev/[PROJECT_ID]/cloudgauge-repo/[SERVICE_NAME]"
+```
+
+#### **Option B: Pushing a Local Image**
+
+If you are building your image locally, update your docker tag and docker push commands:
+
+\# 1\. Build the image 
+```
+docker build -t cloudgauge-image .
+```
+\# 2\. Tag the image for your new Artifact Registry repo 
+```
+docker tag cloudgauge-image asia-south1-docker.pkg.dev/[PROJECT_ID]/cloudgauge-repo/cloudgauge-image
+```
+\# 3\. Push the image  
+```
+docker push asia-south1-docker.pkg.dev/[PROJECT_ID]/cloudgauge-repo/cloudgauge-image
+```
+By following these steps, you can ensure your container images are stored and managed in the specific Google Cloud region that meets your requirements.
+
+---
 
 ## **Cleanup Script**
 
