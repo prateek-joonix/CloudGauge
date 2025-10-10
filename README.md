@@ -294,17 +294,15 @@ Now, let's create the initial Cloud Run service and connect it to your new repos
 
 ### **Step 3: Grant Required IAM Roles** 
 
-The service account needs two key permissions to function correctly. You can grant these permissions after the first deployment is complete.
+To function correctly, the service account needs two key permissions granted directly on the Cloud Run service itself. This ensures all permissions are tightly scoped and follow security best practices.
 
 **Cloud Run Invoker (roles/run.invoker)**: This role is required to allow the Cloud Tasks service to securely trigger your CloudGauge service to start a scan. This permission is granted specifically on the new Cloud Run service you just deployed.
 
 **Cloud Run Viewer (roles/run.viewer)**: This role allows the service to automatically discover its own public URL when it starts up. This feature enables a single-step deployment, removing the need to manually update the service with its own URL. This permission is granted at the service level.
 
-By granting both roles at the service level, you ensure the service account only has the minimum permissions required on the specific resource it needs to access.
+By granting both roles at the **service level**, you ensure the service account only has the minimum permissions required on the specific resource it needs to access.
 
-1. Once the service is created, find its URL on the Cloud Run details page.  
-2. Open the **Cloud Shell** or your local terminal with `gcloud` configured.  
-3. Run the following command, replacing the placeholders with your actual service name, service account email, and region.
+Open the **Cloud Shell** or your local terminal with `gCloud` installed and run the following commands, replacing the placeholders with your values.
 
 ```
 # Store your service account email in a variable for convenience  
