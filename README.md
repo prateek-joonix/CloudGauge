@@ -286,7 +286,7 @@ First, you need your own copy of the code.
 
 ---
 
-### **Step 2: Create the Cloud Run Service (First Deployment)** 
+### **Step 2: Create the Cloud Run Service ** 
 
 Now, let's create the initial Cloud Run service and connect it to your new repository.
 
