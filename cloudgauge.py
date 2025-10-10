@@ -60,14 +60,46 @@ SCOPES = ['https://www.googleapis.com/auth/cloud-platform']
 PROJECT_ID = os.environ.get('PROJECT_ID')
 LOCATION = os.environ.get('LOCATION')
 TASK_QUEUE = os.environ.get('TASK_QUEUE')
-WORKER_URL = os.environ.get('WORKER_URL')
 RESULTS_BUCKET = os.environ.get('RESULTS_BUCKET')
 SA_EMAIL = os.environ.get('SERVICE_ACCOUNT_EMAIL')
+
+def _get_self_url():
+    """
+    (NEW) Dynamically discovers the public URL of the Cloud Run service itself.
+    This avoids the need to manually set WORKER_URL during deployment.
+    """
+    # Cloud Run automatically injects the K_SERVICE environment variable
+    service_name = os.environ.get('K_SERVICE')
+    if not service_name:
+        raise RuntimeError("K_SERVICE environment variable not found. Cannot auto-discover URL. Please set WORKER_URL manually.")
+
+    print(f"🚀 Auto-discovering URL for service: {service_name}...")
+    try:
+        credentials, _ = google_auth_default(scopes=SCOPES)
+        # Use the Cloud Run Admin API
+        run_service = google_api_build('run', 'v1', credentials=credentials)
+        
+        service_path = f"projects/{PROJECT_ID}/locations/{LOCATION}/services/{service_name}"
+        
+        request = run_service.projects().locations().services().get(name=service_path)
+        response = request.execute()
+        
+        url = response.get('status', {}).get('url')
+        if not url:
+            raise RuntimeError(f"Could not find URL in API response for service {service_name}.")
+        
+        print(f"✅ Auto-discovered WORKER_URL: {url}")
+        return url
+    except Exception as e:
+        logging.critical(f"FATAL: Could not discover WORKER_URL via API. Ensure the 'Cloud Run Admin API' is enabled. Error: {e}")
+        raise
+    
+WORKER_URL = _get_self_url()
 
 # ---Add a startup check for essential environment variables ---
 def check_environment_variables():
     """Checks for required environment variables at startup."""
-    required_vars = ['PROJECT_ID', 'LOCATION', 'TASK_QUEUE', 'WORKER_URL', 'RESULTS_BUCKET', 'SERVICE_ACCOUNT_EMAIL']
+    required_vars = ['PROJECT_ID', 'LOCATION', 'TASK_QUEUE', 'RESULTS_BUCKET', 'SERVICE_ACCOUNT_EMAIL']
     missing_vars = [var for var in required_vars if not os.environ.get(var)]
     if missing_vars:
         error_message = f"FATAL: Missing required environment variables: {', '.join(missing_vars)}"
@@ -120,17 +152,21 @@ else:
     print("⚠️ PROJECT_ID or TASK_QUEUE environment variables not set. Skipping queue creation.")
 
 # --- Helper Functions for Streaming Architecture ---
-def _write_finding_to_tmp(job_id, check_name, finding_data):
-    """Appends a single finding record to a temporary JSON Lines file."""
-    file_path = f"/tmp/{job_id}_{check_name}.jsonl"
+def _write_finding_to_gcs(job_id, check_name, finding_data):
+    """Uploads a single finding record as a JSON object to GCS."""
     try:
-        with open(file_path, "a") as f:
-            record = json.dumps(finding_data)
-            f.write(record + "\n")
+        bucket = storage_client.bucket(RESULTS_BUCKET)
+        # Use a unique name for each finding to prevent overwrites
+        blob_name = f"intermediate/{job_id}/{check_name}_{uuid.uuid4()}.json"
+        blob = bucket.blob(blob_name)
+        blob.upload_from_string(
+            json.dumps(finding_data),
+            content_type='application/json'
+        )
     except Exception as e:
-        logging.error(f"Failed to write temporary finding for {check_name}: {e}")
+        logging.error(f"Failed to write finding to GCS for {check_name}: {e}")
 
-def _read_all_findings_from_tmp(job_id):
+def _read_all_findings_from_gcs(job_id):
     """Reads all temporary finding files for a job and groups them by category."""
     category_map = {
         # Security & Identity
@@ -167,42 +203,58 @@ def _read_all_findings_from_tmp(job_id):
     }
     categorized_results = {cat: [] for cat in set(category_map.values())}
     
-    for file_path in glob.glob(f"/tmp/{job_id}_*.jsonl"):
-        try:
-            # Replaced split logic with a more robust way to get the check name
-            base_name = os.path.basename(file_path)
-            check_name = '_'.join(base_name.split('_')[1:]).replace('.jsonl', '').replace("_", " ")
+    try:
+        bucket = storage_client.bucket(RESULTS_BUCKET)
+        prefix = f"intermediate/{job_id}/"
+        blobs = bucket.list_blobs(prefix=prefix)
 
-            category = category_map.get(check_name)
-            if category:
-                with open(file_path, "r") as f:
-                    for line in f:
-                        data = json.loads(line)
-                        categorized_results[category].append(data)
-        except Exception as e:
-            logging.error(f"Failed to read temporary file {file_path}: {e}")
+        for blob in blobs:
+            # Skip the org policy files
+            if "best_practices.json" in blob.name or "current_policies.json" in blob.name:
+                continue
+            
+            try:
+                data_string = blob.download_as_text()
+                data = json.loads(data_string)
+                # The check name is stored inside the JSON object itself
+                check_name = data.get("Check")
+                category = category_map.get(check_name)
+                if category:
+                    categorized_results[category].append(data)
+            except Exception as e:
+                logging.error(f"Failed to read and process GCS finding {blob.name}: {e}")
+    except Exception as e:
+        logging.error(f"Failed to list findings from GCS for job {job_id}: {e}")
+        
     return categorized_results
 
-def _write_org_policies_to_tmp(job_id, best_practices, current_policies):
-    """Writes the raw org policy data to temporary JSON files."""
+def _write_org_policies_to_gcs(job_id, best_practices, current_policies):
+    """Writes the raw org policy data to JSON files in GCS."""
     try:
-        with open(f"/tmp/{job_id}_best_practices.json", "w") as f:
-            json.dump(best_practices, f)
-        with open(f"/tmp/{job_id}_current_policies.json", "w") as f:
-            json.dump(current_policies, f)
+        bucket = storage_client.bucket(RESULTS_BUCKET)
+        
+        bp_blob = bucket.blob(f"intermediate/{job_id}/best_practices.json")
+        bp_blob.upload_from_string(json.dumps(best_practices), content_type='application/json')
+        
+        cp_blob = bucket.blob(f"intermediate/{job_id}/current_policies.json")
+        cp_blob.upload_from_string(json.dumps(current_policies), content_type='application/json')
     except Exception as e:
-        logging.error(f"Failed to write org policy temp files: {e}")
+        logging.error(f"Failed to write org policy files to GCS: {e}")
 
-def _read_org_policies_from_tmp(job_id):
-    """Reads the raw org policy data from temporary files."""
+def _read_org_policies_from_gcs(job_id):
+    """Reads the raw org policy data from GCS files."""
     try:
-        with open(f"/tmp/{job_id}_best_practices.json", "r") as f:
-            best_practices = json.load(f)
-        with open(f"/tmp/{job_id}_current_policies.json", "r") as f:
-            current_policies = json.load(f)
+        bucket = storage_client.bucket(RESULTS_BUCKET)
+        
+        bp_blob = bucket.blob(f"intermediate/{job_id}/best_practices.json")
+        best_practices = json.loads(bp_blob.download_as_text())
+        
+        cp_blob = bucket.blob(f"intermediate/{job_id}/current_policies.json")
+        current_policies = json.loads(cp_blob.download_as_text())
+        
         return (best_practices, current_policies)
     except Exception as e:
-        logging.error(f"Failed to read org policy temp files: {e}")
+        logging.error(f"Failed to read org policy files from GCS: {e}")
         return (None, None)
 
 # --- Core Data Fetching and Analysis Functions ---
@@ -610,7 +662,7 @@ def check_org_iam_policy(org_id, job_id):
             result_crit = {"Check": CHECK_NAME_CRITICAL, "Finding": crit_role_findings, "Status": "Action Required"}
         else:
             result_crit = {"Check": CHECK_NAME_CRITICAL, "Finding": [{"Status": "No principals found with Owner or Org Admin roles."}], "Status": "Compliant"}
-        _write_finding_to_tmp(job_id, CHECK_NAME_CRITICAL.replace(" ", "_"), result_crit)
+        _write_finding_to_gcs(job_id, CHECK_NAME_CRITICAL.replace(" ", "_"), result_crit)
 
         # --- Check 2: Public Org-Level Access ---
         public_access_findings = [{"Role": b.get('role'), "Principal": m} 
@@ -622,12 +674,12 @@ def check_org_iam_policy(org_id, job_id):
             result_public = {"Check": CHECK_NAME_PUBLIC, "Finding": public_access_findings, "Status": "Action Required"}
         else:
             result_public = {"Check": CHECK_NAME_PUBLIC, "Finding": [{"Status": "No public access found at the organization level."}], "Status": "Compliant"}
-        _write_finding_to_tmp(job_id, CHECK_NAME_PUBLIC.replace(" ", "_"), result_public)
+        _write_finding_to_gcs(job_id, CHECK_NAME_PUBLIC.replace(" ", "_"), result_public)
 
     except Exception as e:
         # If the entire check fails, write a single error file.
         error_result = {"Check": "Organization IAM Policy Check", "Finding": [{"Error": str(e)}], "Status": "Error"}
-        _write_finding_to_tmp(job_id, "Organization_IAM_Policy_Check_Error", error_result)
+        _write_finding_to_gcs(job_id, "Organization_IAM_Policy_Check_Error", error_result)
 
 def check_audit_logging(org_id, job_id):
     """
@@ -652,7 +704,7 @@ def check_audit_logging(org_id, job_id):
             result = {"Check": CHECK_NAME, "Finding": [{"Issue": "No organization-level log sink configured."}], "Status": "Action Required"}
     except Exception as e:
         result = {"Check": "Log Sink Check", "Finding": [{"Error": str(e)}], "Status": "Error"}
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 def check_scc_status(org_id, job_id):
     """
@@ -681,7 +733,7 @@ def check_scc_status(org_id, job_id):
             result = {"Check": "Security Command Center", "Finding": [{"Error": str(e)}], "Status": "Error"}
     except Exception as e:
         result = {"Check": "Security Command Center", "Finding": [{"Error": str(e)}], "Status": "Error"}
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 def check_service_health_status(org_id, job_id):
     """
@@ -711,7 +763,7 @@ def check_service_health_status(org_id, job_id):
             result = {"Check": CHECK_NAME, "Finding": [{"Status": "Enabled"}], "Status": "Compliant"} # Should not be reached on error
     except Exception as e:
         result = {"Check": CHECK_NAME, "Finding": [{"Error": str(e)}], "Status": "Error"}
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 
 def check_essential_contacts(org_id, job_id):
@@ -744,7 +796,7 @@ def check_essential_contacts(org_id, job_id):
             result = {"Check": CHECK_NAME, "Finding": [{"Error": str(e)}], "Status": "Error"}
     except Exception as e:
         result = {"Check": CHECK_NAME, "Finding": [{"Error": str(e)}], "Status": "Error"}
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 
 def check_project_iam_policy(scope_id, projects, job_id):
@@ -762,7 +814,7 @@ def check_project_iam_policy(scope_id, projects, job_id):
     print(f"🕵️  [{job_id}] Checking for {CHECK_NAME} in parallel...")
     if not projects: 
         result = {"Check": "Project IAM Hygiene", "Finding": [{"Error": "Could not list projects."}], "Status": "Error"}
-        _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+        _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
         return
     
     def check_single_project(p):
@@ -775,7 +827,7 @@ def check_project_iam_policy(scope_id, projects, job_id):
                 if b.get('role') in ['roles/owner', 'roles/editor']:
                     for member in b.get('members', []):
                         findings.append({'Project': project_id, 'Principal': member, 'Role': b.get('role')})
-        except Exception: pass
+        except Exception as e: logging.warning(f"Could not check {CHECK_NAME} for {project_id}: {e}")
         return findings
 
     all_findings = []
@@ -786,7 +838,7 @@ def check_project_iam_policy(scope_id, projects, job_id):
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Action Required"}
     else:
         result = {"Check": CHECK_NAME, "Finding": [{"Status": "No projects found with Owner or Editor roles."}], "Status": "Compliant"}
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 def check_os_config_coverage(scope_id, all_projects, job_id):
     """
@@ -829,7 +881,7 @@ def check_os_config_coverage(scope_id, all_projects, job_id):
             if missing: return {"Project": project_id, "VMs Not Reporting": ", ".join(sorted(missing))}
         except core_exceptions.FailedPrecondition:
             return {"Project": project_id, "Issue": "OS inventory management disabled."}
-        except Exception: pass
+        except Exception as e: logging.warning(f"Could not check {CHECK_NAME} for {project_id}: {e}")
         return None
 
     def _is_os_reporting(client, project, vm):
@@ -854,7 +906,7 @@ def check_os_config_coverage(scope_id, all_projects, job_id):
         result = {"Check": CHECK_NAME, "Finding": [{"Status": "All unmanaged VMs appear to have OS Config agent."}], "Status": "Compliant"}
     else:
         result = {"Check": CHECK_NAME, "Finding": results, "Status": "Action Required"}
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 
 def check_monitoring_coverage(scope_id, all_projects, job_id):
@@ -887,7 +939,7 @@ def check_monitoring_coverage(scope_id, all_projects, job_id):
                     issues.append({"Project": project_id, "Issue": f"Missing alert policy for {name}"})
             if "serviceruntime.googleapis.com/quota" not in filters:
                 issues.append({"Project": project_id, "Issue": "Missing Quota alerting policy"})
-        except Exception: pass
+        except Exception as e: logging.warning(f"Could not check {CHECK_NAME} for {project_id}: {e}")
         return issues
         
     results = []
@@ -902,7 +954,7 @@ def check_monitoring_coverage(scope_id, all_projects, job_id):
         result = {"Check": CHECK_NAME, "Finding": [{"Status": "All projects appear to have key alert policies."}], "Status": "Compliant"}
     else:
         result = {"Check": CHECK_NAME, "Finding": results, "Status": "Action Required"}
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 
 def run_network_insights(scope_id, all_projects, active_zones, active_regions, job_id):
@@ -925,65 +977,94 @@ def run_network_insights(scope_id, all_projects, active_zones, active_regions, j
     all_locations = active_zones + active_regions
 
     # --- THIS HELPER FUNCTION DOES ALL THE PARSING ---
-    def _parse_network_insight_content(content_dict, description, project_id):
-        """Helper to parse raw insight data into a structured dictionary."""
+    def _parse_network_insight_content(insight_dict, description, project_id, check_name):
+        """
+        Helper to parse raw insight data into a structured dictionary. This version combines
+        all working parsers with the corrected GKE Service Account logic.
+        """
         parsed_findings_list = []
+        description = insight_dict.get('description', '')
+        content_dict = insight_dict.get('content', {})
         try:
-            # For Subnet IP Utilization
-            if 'ipUtilizationSummaryInfo' in content_dict:
-                for info in content_dict.get('ipUtilizationSummaryInfo', []):
-                    for net_stat in info.get('networkStats', []):
-                        network = net_stat.get('networkUri', 'N/A').split('/')[-1]
-                        for sub_stat in net_stat.get('subnetStats', []):
-                            subnet = sub_stat.get('subnetUri', 'N/A').split('/')[-1]
-                            for range_stat in sub_stat.get('subnetRangeStats', []):
-                                parsed_findings_list.append({
-                                    "Project": project_id,
-                                    "Finding Type": "Subnet Utilization",
-                                    "Resource": f"Subnet: {subnet} (Network: {network})",
-                                    "Detail": f"Range: {range_stat.get('subnetRangePrefix', 'N/A')}",
-                                    "Value": f"{range_stat.get('allocationRatio', 0) * 100:.2f}% Allocation"
-                                })
-                
-            # For PSA IP Utilization
-            if 'psaIpUtilizationSummaryInfo' in content_dict:
-                for info in content_dict.get('psaIpUtilizationSummaryInfo', []):
-                    for net_stat in info.get('networkStats', []):
-                        network = net_stat.get('networkUri', 'N/A').split('/')[-1]
-                        for psa_stat in net_stat.get('psaStats', []):
-                            parsed_findings_list.append({
-                                "Project": project_id,
-                                "Finding Type": "PSA Utilization",
-                                "Resource": f"Network: {network}",
-                                "Detail": f"PSA Range: {psa_stat.get('psaRangePrefix', 'N/A')}",
-                                "Value": f"{psa_stat.get('allocationRatio', 0) * 100:.2f}% Allocation"
-                            })
+            if check_name == "GKE Service Account":
+                resource_name = "N/A"
+                # Method 1: Try to get the cluster name from the structured targetResources field.
+                target_resources = insight_dict.get('targetResources', [])
+                if target_resources and target_resources[0]:
+                    resource_name = target_resources[0].split('/')[-1]
 
-            # For GKE IP Utilization
-            if 'gkeIpUtilizationSummaryInfo' in content_dict:
-                for info in content_dict.get('gkeIpUtilizationSummaryInfo', []):
-                    for cluster_stat in info.get('clusterStats', []):
-                        parsed_findings_list.append({
-                            "Project": project_id,
-                            "Finding Type": "GKE Utilization",
-                            "Resource": f"Cluster: {cluster_stat.get('clusterUri', 'N/A').split('/')[-1]}",
-                            "Detail": f"Pod Range Usage: {cluster_stat.get('podRangesAllocationRatio', 0) * 100:.2f}%",
-                            "Value": f"Service Range Usage: {cluster_stat.get('serviceRangesAllocationRatio', 0) * 100:.2f}%"
-                        })
+            # Method 2 (Fallback): If targetResources is empty, parse the description string.
+            if resource_name == "N/A":
+                # This regex looks for 'GKE cluster' followed by the name in quotes or backticks.
+                match = re.search(r"GKE cluster [`']([^`']+)['`]", description)
+                if match:
+                    resource_name = match.group(1)
 
-            # For Unassigned External IPs
-            if 'overallStats' in content_dict:
-                stats = content_dict['overallStats']
                 parsed_findings_list.append({
-                        "Project": project_id,
-                        "Finding Type": "Unassigned IPs",
-                        "Resource": "Organization (Overall)",
-                        "Detail": f"Total Reserved: {stats.get('reservedCount', 0):.0f}",
-                        "Value": f"Unassigned Count: {stats.get('unassignedCount', 0):.0f} ({stats.get('unassignedRatio', 0) * 100:.2f}%)"
+                    "Project": project_id,
+                    "Finding Type": "GKE Service Account",
+                    "Resource": f"Cluster: {resource_name}",
+                    "Detail": description,
+                    # 2. Use the descriptive name, as this is what the insight provides.
+                    "Value": "Compute Engine default service account"
                 })
 
+            # --- EXISTING PARSERS FOR OTHER INSIGHT TYPES ---
+            elif 'Utilization' in check_name:
+            # For Subnet IP Utilization
+                if 'ipUtilizationSummaryInfo' in content_dict:
+                    for info in content_dict.get('ipUtilizationSummaryInfo', []):
+                        for net_stat in info.get('networkStats', []):
+                            network = net_stat.get('networkUri', 'N/A').split('/')[-1]
+                            for sub_stat in net_stat.get('subnetStats', []):
+                                subnet = sub_stat.get('subnetUri', 'N/A').split('/')[-1]
+                                for range_stat in sub_stat.get('subnetRangeStats', []):
+                                    parsed_findings_list.append({
+                                        "Project": project_id,
+                                        "Finding Type": "Subnet Utilization",
+                                        "Resource": f"Subnet: {subnet} (Network: {network})",
+                                        "Detail": f"Range: {range_stat.get('subnetRangePrefix', 'N/A')}",
+                                        "Value": f"{range_stat.get('allocationRatio', 0) * 100:.2f}% Allocation"
+                                    })
+                    
+                # For PSA IP Utilization
+                if 'psaIpUtilizationSummaryInfo' in content_dict:
+                    for info in content_dict.get('psaIpUtilizationSummaryInfo', []):
+                        for net_stat in info.get('networkStats', []):
+                            network = net_stat.get('networkUri', 'N/A').split('/')[-1]
+                            for psa_stat in net_stat.get('psaStats', []):
+                                parsed_findings_list.append({
+                                    "Project": project_id,
+                                    "Finding Type": "PSA Utilization",
+                                    "Resource": f"Network: {network}",
+                                    "Detail": f"PSA Range: {psa_stat.get('psaRangePrefix', 'N/A')}",
+                                    "Value": f"{psa_stat.get('allocationRatio', 0) * 100:.2f}% Allocation"
+                                })
+
+                # For GKE IP Utilization
+                if 'gkeIpUtilizationSummaryInfo' in content_dict:
+                    for info in content_dict.get('gkeIpUtilizationSummaryInfo', []):
+                        for cluster_stat in info.get('clusterStats', []):
+                            parsed_findings_list.append({
+                                "Project": project_id,
+                                "Finding Type": "GKE Utilization",
+                                "Resource": f"Cluster: {cluster_stat.get('clusterUri', 'N/A').split('/')[-1]}",
+                                "Detail": f"Pod Range Usage: {cluster_stat.get('podRangesAllocationRatio', 0) * 100:.2f}%",
+                                "Value": f"Service Range Usage: {cluster_stat.get('serviceRangesAllocationRatio', 0) * 100:.2f}%"
+                            })
+
+                # For Unassigned External IPs
+                if 'overallStats' in content_dict:
+                    stats = content_dict['overallStats']
+                    parsed_findings_list.append({
+                            "Project": project_id,
+                            "Finding Type": "Unassigned IPs",
+                            "Resource": "Organization (Overall)",
+                            "Detail": f"Total Reserved: {stats.get('reservedCount', 0):.0f}",
+                            "Value": f"Unassigned Count: {stats.get('unassignedCount', 0):.0f} ({stats.get('unassignedRatio', 0) * 100:.2f}%)"
+                    })
+
         except Exception as e:
-            # This is the NEW clean exception handler
             return [{
                 "Project": project_id,
                 "Finding Type": "Parse Error",
@@ -992,7 +1073,7 @@ def run_network_insights(scope_id, all_projects, active_zones, active_regions, j
                 "Value": "Error"
             }]
 
-        # Clean fallback logic
+        # Fallback logic for any other un-parsed insights
         if not parsed_findings_list:
             parsed_findings_list.append({
                 "Project": project_id,
@@ -1002,7 +1083,7 @@ def run_network_insights(scope_id, all_projects, active_zones, active_regions, j
                 "Value": "See finding"              
             })
             
-        return parsed_findings_list # Return the final list
+        return parsed_findings_list
     
 
     insight_type_map = {
@@ -1031,11 +1112,10 @@ def run_network_insights(scope_id, all_projects, active_zones, active_regions, j
                             parsed_data_list = []
                             try:
                                 insight_dict = Insight.to_dict(insight)
-                                content_dict = insight_dict.get('content', {})
                                 
                                 # --- MODIFIED CALL ---
-                                # Pass the project_id INTO the parser
-                                parsed_data_list = _parse_network_insight_content(content_dict, insight.description, project_id)
+                                # Pass the check_name INTO the parser so it knows what it's parsing.
+                                parsed_data_list = _parse_network_insight_content(insight_dict, insight.description, project_id, check_name)
 
                             except Exception as e:
                                 parsed_data_list = [{"Project": project_id, "Finding Type": "Top-level Parse Error", "Resource": insight.description, "Detail": str(e), "Value": "N/A"}]
@@ -1070,50 +1150,89 @@ def run_network_insights(scope_id, all_projects, active_zones, active_regions, j
     for check_name, all_findings in final_findings_by_check.items():
         if all_findings:
             result = {"Check": check_name, "Finding": all_findings, "Status": "Action Required"}
-            _write_finding_to_tmp(job_id, check_name.replace(" ", "_"), result)
+            _write_finding_to_gcs(job_id, check_name.replace(" ", "_"), result)
 
     
 def check_sa_key_rotation(scope_id, all_projects, job_id):
     """
-    Scans projects for user-managed service account keys older than 90 days.
-
-    Args:
-        org_id (str): The organization ID.
-        all_projects (list): A list of project dictionaries.
-
-    Returns:
-        list: A list of finding dictionaries for projects with old keys.
+    Scans ALL projects and ALL service account keys for user-managed keys older than 90 days.
+    This version corrects the pagination logic for listing keys.
     """
     CHECK_NAME = "Service Account Key Rotation"
     print(f"🔑 [{job_id}] Checking for {CHECK_NAME}...")
-    def check_project(p):
-        project_id, findings = p['projectId'], []
+
+    all_findings = []
+
+    for project in all_projects:
+        project_id = project['projectId']
         try:
             credentials, _ = google_auth_default(scopes=SCOPES)
             iam_service = google_api_build('iam', 'v1', credentials=credentials)
-            s_accounts = iam_service.projects().serviceAccounts().list(name=f'projects/{project_id}').execute().get('accounts', [])
+
+            # This pagination loop for service accounts is correct and remains unchanged.
+            s_accounts = []
+            request = iam_service.projects().serviceAccounts().list(name=f'projects/{project_id}')
+            while request:
+                response = request.execute()
+                s_accounts.extend(response.get('accounts', []))
+                request = iam_service.projects().serviceAccounts().list_next(previous_request=request, previous_response=response)
+
             for sa in s_accounts:
-                keys = iam_service.projects().serviceAccounts().keys().list(name=sa['name'], keyTypes=['USER_MANAGED']).execute().get('keys', [])
+                keys = []
+                # --- CORRECTED: Start of manual pagination for keys ---
+                # Make the initial request to list keys
+                key_request = iam_service.projects().serviceAccounts().keys().list(name=sa['name'], keyTypes=['USER_MANAGED'])
+
+                # Loop until there are no more pages
+                while True:
+                    key_response = key_request.execute()
+                    keys.extend(key_response.get('keys', []))
+                    
+                    next_page_token = key_response.get('nextPageToken')
+                    if next_page_token:
+                        # If a next page token exists, prepare the next request
+                        key_request = iam_service.projects().serviceAccounts().keys().list(
+                            name=sa['name'],
+                            keyTypes=['USER_MANAGED'],
+                            pageToken=next_page_token
+                        )
+                    else:
+                        # If there's no token, we've retrieved all keys, so break the loop
+                        break
+                # --- END of corrected manual pagination ---
+
                 for key in keys:
                     created_time = datetime.fromisoformat(key['validAfterTime'].replace('Z', '+00:00'))
                     if (datetime.now(timezone.utc) - created_time).days > 90:
-                        findings.append({"Project": project_id, "Service Account": sa['email'], "Issue": "Key is older than 90 days."})
-        except Exception: pass
-        return findings
+                        all_findings.append({
+                            "Project": project_id,
+                            "Service Account": sa['email'],
+                            "Issue": f"Key is older than 90 days (created {created_time.strftime('%Y-%m-%d')})."
+                        })
 
-    all_findings = []
-    for project in all_projects:
-        # check_project returns a list of findings for the project
-        findings = check_project(project)
-        if findings:
-            # We extend the main results list with the items from the findings list
-            all_findings.extend(findings)
+        except Exception as e:
+            logging.error(f"Failed SA key check for project {project_id}: {e}")
+            all_findings.append({
+                "Project": project_id,
+                "Service Account": "N/A",
+                "Issue": f"Error scanning project for SA keys: {e}"
+            })
 
+    # Final reporting logic remains the same.
     if all_findings:
-        result = {"Check": CHECK_NAME + " (>90 days)", "Finding": all_findings, "Status": "Action Required"}
+        result = {
+            "Check": CHECK_NAME,
+            "Finding": all_findings,
+            "Status": "Action Required"
+        }
     else:
-        result = {"Check": CHECK_NAME + " (>90 days)", "Finding": [{"Status": "No user-managed keys older than 90 days found."}], "Status": "Compliant"}
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+        result = {
+            "Check": CHECK_NAME,
+            "Finding": [{"Status": "No user-managed service account keys older than 90 days were found."}],
+            "Status": "Compliant"
+        }
+
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 def check_public_buckets(scope_id, all_projects, job_id):
     """Scans for public GCS buckets and writes findings to a temp file."""
@@ -1156,7 +1275,7 @@ def check_public_buckets(scope_id, all_projects, job_id):
     else:
         result = {"Check": CHECK_NAME, "Finding": [{"Status": "No publicly accessible buckets found."}], "Status": "Compliant"}
     
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 def check_organization_policies(scope, scope_id, job_id):
     """Fetches Org Policies and writes the raw data to temp files."""
@@ -1173,11 +1292,11 @@ def check_organization_policies(scope, scope_id, job_id):
         current_policies = get_project_policies(scope_id)
     
     if isinstance(best_practices, dict) and isinstance(current_policies, dict):
-        _write_org_policies_to_tmp(job_id, best_practices, current_policies)
+        _write_org_policies_to_gcs(job_id, best_practices, current_policies)
     else:
         err_msg = f"Best practices error: {best_practices}" if not isinstance(best_practices, dict) else f"Policies error: {current_policies}"
         result = {"Check": "Organization Policies", "Finding": [{"Error": f"Could not fetch policy data for {scope} '{scope_id}'. Details: {err_msg}"}], "Status": "Error"}
-        _write_finding_to_tmp(job_id, "Organization_Policies_Check", result)
+        _write_finding_to_gcs(job_id, "Organization_Policies_Check", result)
 
 def check_storage_versioning(scope_id, all_projects, job_id):
     """
@@ -1200,7 +1319,7 @@ def check_storage_versioning(scope_id, all_projects, job_id):
             for bucket in storage_client.list_buckets():
                 if not bucket.versioning_enabled:
                     findings.append({"Project": project_id, "Bucket": bucket.name, "Issue": "Object versioning is not enabled."})
-        except Exception: pass
+        except Exception as e: logging.warning(f"Could not check {CHECK_NAME} for {project_id}: {e}")
         return findings
 
     all_findings = []
@@ -1213,7 +1332,7 @@ def check_storage_versioning(scope_id, all_projects, job_id):
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Action Required"}
     else:
         result = {"Check": CHECK_NAME, "Finding": [{"Status": "Object versioning is enabled on all buckets."}], "Status": "Compliant"}
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 def check_standalone_vms(scope_id, all_projects, job_id):
     """
@@ -1251,7 +1370,7 @@ def check_standalone_vms(scope_id, all_projects, job_id):
             
             if standalone:
                 return {"Project": project_id, "Standalone VMs": ", ".join(sorted(standalone))}
-        except Exception: pass
+        except Exception as e: logging.warning(f"Could not check {CHECK_NAME} for {project_id}: {e}")
         return None
 
     all_findings = []
@@ -1264,7 +1383,7 @@ def check_standalone_vms(scope_id, all_projects, job_id):
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Investigation Recommended"}
     else:
         result = {"Check": CHECK_NAME, "Finding": [{"Status": "No running standalone, unmanaged VMs found."}], "Status": "Compliant"}
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 def check_open_firewall_rules(scope_id, all_projects, job_id):
     """
@@ -1288,7 +1407,7 @@ def check_open_firewall_rules(scope_id, all_projects, job_id):
             for rule in compute.firewalls().list(project=project_id).execute().get('items', []):
                 if not rule.get('disabled', False) and '0.0.0.0/0' in rule.get('sourceRanges', []):
                     open_rules.append({"Project": project_id, "Rule Name": rule['name'], "VPC": rule['network'].split('/')[-1]})
-        except Exception: pass
+        except Exception as e: logging.warning(f"Could not check {CHECK_NAME} for {project_id}: {e}")
         return open_rules
 
     all_findings = []
@@ -1301,7 +1420,7 @@ def check_open_firewall_rules(scope_id, all_projects, job_id):
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Action Required"}
     else:
         result = {"Check": CHECK_NAME, "Finding": [{"Status": "No firewall rules found open to 0.0.0.0/0."}], "Status": "Compliant"}
-    _write_finding_to_tmp(job_id, "Open_Firewall_Rules", result) # Using a simplified filename
+    _write_finding_to_gcs(job_id, "Open_Firewall_Rules", result) # Using a simplified filename
 
 def check_gke_hygiene(scope_id, all_projects, job_id):
     """
@@ -1354,7 +1473,7 @@ def check_gke_hygiene(scope_id, all_projects, job_id):
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Action Required"}
     else:
         result = {"Check": CHECK_NAME, "Finding": [{"Status": "All checked GKE clusters seem to follow best practices."}], "Status": "Compliant"}
-    _write_finding_to_tmp(job_id, CHECK_NAME.replace(" ", "_"), result)
+    _write_finding_to_gcs(job_id, CHECK_NAME.replace(" ", "_"), result)
 
 def check_resilience_assets(org_id, job_id):
     """
@@ -1390,29 +1509,29 @@ def check_resilience_assets(org_id, job_id):
             if backup_conf.get("retainedBackupsCount", 0) < 30 : bad_retention.append({"Project": proj, "Instance": name, "Retention": backup_conf.get("retainedBackupsCount", "N/A")})
 
         if non_ha:
-            _write_finding_to_tmp(job_id, "Cloud_SQL_High_Availability", {"Check": "Cloud SQL High Availability", "Finding": non_ha, "Status": "Action Required"})
+            _write_finding_to_gcs(job_id, "Cloud_SQL_High_Availability", {"Check": "Cloud SQL High Availability", "Finding": non_ha, "Status": "Action Required"})
         if no_backup:
-            _write_finding_to_tmp(job_id, "Cloud_SQL_Automated_Backups", {"Check": "Cloud SQL Automated Backups", "Finding": no_backup, "Status": "Action Required"})
+            _write_finding_to_gcs(job_id, "Cloud_SQL_Automated_Backups", {"Check": "Cloud SQL Automated Backups", "Finding": no_backup, "Status": "Action Required"})
         if bad_retention:
-            _write_finding_to_tmp(job_id, "Cloud_SQL_Backup_Retention", {"Check": "Cloud SQL Backup Retention", "Finding": bad_retention, "Status": "Action Required"})
+            _write_finding_to_gcs(job_id, "Cloud_SQL_Backup_Retention", {"Check": "Cloud SQL Backup Retention", "Finding": bad_retention, "Status": "Action Required"})
         if no_pitr:
-            _write_finding_to_tmp(job_id, "Cloud_SQL_PITR", {"Check": "Cloud SQL PITR", "Finding": no_pitr, "Status": "Action Required"})
+            _write_finding_to_gcs(job_id, "Cloud_SQL_PITR", {"Check": "Cloud SQL PITR", "Finding": no_pitr, "Status": "Action Required"})
 
         # Zonal MIGs Check
         mig_req = {"parent": parent, "asset_types": ["compute.googleapis.com/InstanceGroupManager"], "content_type": asset_v1.ContentType.RESOURCE}
         zonal_migs = [{"Project": get_project_from_asset_name(a.name), "MIG Name": a.resource.data.get('name')} for a in asset_client.list_assets(request=mig_req) if 'zone' in a.resource.data and not a.resource.data.get('name', '').startswith('gke-')]
         if zonal_migs:
-            _write_finding_to_tmp(job_id, "MIG_Resilience_(Zonal)", {"Check": "MIG Resilience (Zonal)", "Finding": zonal_migs, "Status": "Action Required"})
+            _write_finding_to_gcs(job_id, "MIG_Resilience_(Zonal)", {"Check": "MIG Resilience (Zonal)", "Finding": zonal_migs, "Status": "Action Required"})
         
         # Disk Snapshots Check
         snap_req = {"parent": parent, "asset_types": ["compute.googleapis.com/Snapshot"], "content_type": asset_v1.ContentType.RESOURCE}
         single_region = len([a for a in asset_client.list_assets(request=snap_req) if len(a.resource.data.get("storageLocations", [])) <= 1])
         if single_region > 0:
-            _write_finding_to_tmp(job_id, "Disk_Snapshot_Resilience", {"Check": "Disk Snapshot Resilience", "Finding": [{"Issue": f"Found {single_region} snapshots stored in only one region."}], "Status": "Action Required"})
+            _write_finding_to_gcs(job_id, "Disk_Snapshot_Resilience", {"Check": "Disk Snapshot Resilience", "Finding": [{"Issue": f"Found {single_region} snapshots stored in only one region."}], "Status": "Action Required"})
 
     except Exception as e:
         error_result = {"Check": "Resilience Asset Checks", "Finding": [{"Error": str(e)}], "Status": "Error"}
-        _write_finding_to_tmp(job_id, "Resilience_Asset_Checks_Error", error_result)
+        _write_finding_to_gcs(job_id, "Resilience_Asset_Checks_Error", error_result)
 
 # --- Cost Optimization Checks ---
 
@@ -1545,7 +1664,7 @@ def run_cost_recommendations(scope_id, all_projects, active_zones, active_region
         if all_findings:
             result = {"Check": check_name, "Finding": all_findings, "Status": "Action Required"}
             # Use the check_name as the unique identifier for the filename
-            _write_finding_to_tmp(job_id, check_name.replace(" ", "_"), result)
+            _write_finding_to_gcs(job_id, check_name.replace(" ", "_"), result)
 
 # --- Operational Excellence Checks ---
 
@@ -1573,7 +1692,7 @@ def run_miscellaneous_checks_refactored(scope, scope_id, all_projects, job_id):
             rules = compute_service.firewalls().list(project=project_id).execute().get('items', [])
             if len(rules) > 150:
                 return {"Project": project_id, "Rule Count": len(rules), "Recommendation": f"Project has {len(rules)} firewall rules."}
-        except Exception: pass
+        except Exception as e: logging.warning(f"Could not check firewall_rule_count for {project_id}: {e}")
         return None
 
     firewall_findings = []
@@ -1584,7 +1703,7 @@ def run_miscellaneous_checks_refactored(scope, scope_id, all_projects, job_id):
 
     if firewall_findings:
         result = {"Check": "VPC Firewall Complexity (>150 Rules)", "Finding": firewall_findings, "Status": "Investigation Recommended"}
-        _write_finding_to_tmp(job_id, "VPC_Firewall_Complexity", result)
+        _write_finding_to_gcs(job_id, "VPC_Firewall_Complexity", result)
 
     # --- Org-Level Recommender/Insight Checks (Run ONLY for organization scope) ---
     if scope == 'organization':
@@ -1655,11 +1774,11 @@ def run_miscellaneous_checks_refactored(scope, scope_id, all_projects, job_id):
     # --- Final Assembly ---
     if recent_change_findings:
         result = {"Check": "Recent Changes (Org & Project)", "Finding": recent_change_findings, "Status": "Informational"}
-        _write_finding_to_tmp(job_id, "Recent_Changes", result)
+        _write_finding_to_gcs(job_id, "Recent_Changes", result)
     
     if unattended_findings:
         result = {"Check": "Unattended Projects", "Finding": unattended_findings, "Status": "Action Required"}
-        _write_finding_to_tmp(job_id, "Unattended_Projects", result)
+        _write_finding_to_gcs(job_id, "Unattended_Projects", result)
 
     print("✅ Miscellaneous checks complete.")
 
@@ -1720,7 +1839,7 @@ def run_service_limit_checks_refactored(scope_id, all_projects, job_id):
         result = {"Check": CHECK_NAME, "Finding": [{"Status": "No quotas found over 80% utilization."}], "Status": "Compliant"}
     else:
         result = {"Check": CHECK_NAME, "Finding": all_findings, "Status": "Action Required"}
-    _write_finding_to_tmp(job_id, "Quota_Utilization", result)
+    _write_finding_to_gcs(job_id, "Quota_Utilization", result)
     
 # --- Vertex AI Remediation Generation ---
 
@@ -1860,7 +1979,7 @@ def run_all_checks(scope, scope_id, job_id, progress_callback=None):
                 print(f"❌ Check '{check_name}' failed critically: {e}")
                 # Optionally write an error finding to a temp file
                 error_result = {"Check": check_name, "Finding": [{"Error": str(e)}], "Status": "Error"}
-                _write_finding_to_tmp(job_id, f"ERROR_{check_name}".replace(" ", "_"), error_result)
+                _write_finding_to_gcs(job_id, f"ERROR_{check_name}".replace(" ", "_"), error_result)
             finally:
                 completed_checks += 1
                 progress = 5 + int((completed_checks / total_checks) * 90)
@@ -2820,10 +2939,10 @@ def run_scan_worker():
 
         update_status_in_gcs(job_id, scope_id, 98, "Generating final HTML and CSV reports...")
 
-        # 2. Read all results back from /tmp for report generation
-        all_results = _read_all_findings_from_tmp(job_id)
+        # 2. Read all results back from /gcs for report generation
+        all_results = _read_all_findings_from_gcs(job_id)
         # Also read the special-cased org policy data
-        org_policy_data = _read_org_policies_from_tmp(job_id)
+        org_policy_data = _read_org_policies_from_gcs(job_id)
         if org_policy_data[0] and org_policy_data[1]:
             all_results["Organization Policies"] = org_policy_data
 
@@ -2846,14 +2965,18 @@ def run_scan_worker():
              update_status_in_gcs(job_id, scope_id, 100, f"A critical error occurred: {e}", status="error")
         return "Internal Server Error", 500
     finally:
-        # CRUCIAL: Clean up all temporary files for this job_id
+        # CRUCIAL: Clean up all intermediate files from GCS for this job_id
         if job_id:
-            print(f"[{job_id}] Cleaning up temporary files...")
-            for file_path in glob.glob(f"/tmp/{job_id}_*.json*"):
-                try:
-                    os.remove(file_path)
-                except Exception as e:
-                    logging.error(f"[{job_id}] Failed to remove temp file {file_path}: {e}")
+            print(f"[{job_id}] Cleaning up intermediate files from GCS...")
+            try:
+                bucket = storage_client.bucket(RESULTS_BUCKET)
+                prefix_to_delete = f"intermediate/{job_id}/"
+                blobs_to_delete = list(bucket.list_blobs(prefix=prefix_to_delete))
+                if blobs_to_delete:
+                    bucket.delete_blobs(blobs_to_delete)
+                    print(f"[{job_id}] Deleted {len(blobs_to_delete)} intermediate files.")
+            except Exception as e:
+                logging.error(f"[{job_id}] Failed to clean up intermediate GCS files: {e}")
     
 @app.route('/api/status/<string:job_id>/<string:scope_id>')
 def api_check_status(job_id, scope_id):
@@ -2949,7 +3072,7 @@ def get_insights():
                     for insight in insights:
                         resource_name = insight.target_resources[0].split('/')[-1] if insight.target_resources else 'N/A'
                         all_findings.append({"check": check_name, "project": project_id, "resource": resource_name, "details": insight.description})
-                except Exception: pass
+                except Exception as e: logging.warning(f"Could not check global insight for {project_id}: {e}")
 
             # Scan for REGIONAL insights
             for loc in active_regions:
@@ -2960,7 +3083,7 @@ def get_insights():
                         for insight in insights:
                             resource_name = insight.target_resources[0].split('/')[-1] if insight.target_resources else 'N/A'
                             all_findings.append({"check": check_name, "project": project_id, "resource": resource_name, "details": insight.description})
-                    except Exception: pass
+                    except Exception as e: logging.warning(f"Could not check regional insight for {project_id}: {e}")
             
             # Scan for ZONAL insights
             for loc in active_zones:
@@ -2971,7 +3094,7 @@ def get_insights():
                         for insight in insights:
                             resource_name = insight.target_resources[0].split('/')[-1] if insight.target_resources else 'N/A'
                             all_findings.append({"check": check_name, "project": project_id, "resource": resource_name, "details": insight.description})
-                    except Exception: pass
+                    except Exception as e: logging.warning(f"Could not check zonal isnight for {project_id}: {e}")
         
         return all_findings
 
