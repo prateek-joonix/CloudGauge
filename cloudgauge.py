@@ -343,77 +343,95 @@ def get_best_practices_from_gcs(public_url):
     except Exception as e:
         return f"Error downloading or parsing CSV: {e}"
     
-def get_organization_policies(org_id):
+def get_effective_org_policies(scope, scope_id):
     """
-    Fetches all organization policies for a given Google Cloud organization.
+    Calculates the effective organization policies for a resource by manually
+    traversing its ancestry and merging policies. This avoids the low daily
+    quota of the Cloud Asset Policy Analyzer API.
 
     Args:
-        org_id (str): The ID of the organization (e.g., "123456789012").
+        scope (str): The scope ('organization', 'folder', 'project').
+        scope_id (str): The ID of the resource.
 
     Returns:
-        dict: A dictionary of current organization policies, keyed by policy ID.
+        dict: A dictionary of effective organization policies, keyed by policy ID.
         str: An error message if fetching fails.
     """
-    print(f"🔍 Fetching policies for org: {org_id}...")
+    print(f"🔍 Calculating effective policies for {scope} '{scope_id}' by traversing hierarchy...")
     try:
         credentials, _ = google_auth_default(scopes=SCOPES)
-        service = google_api_build('cloudresourcemanager', 'v1', credentials=credentials)
-        current_policies, request = {}, service.organizations().listOrgPolicies(resource=f'organizations/{org_id}', body={})
-        while request:
-            response = request.execute()
-            for policy in response.get('policies', []):
-                if full_path := policy.get('constraint'):
-                    current_policies[full_path.split('/')[-1]] = policy
-            request = service.organizations().listOrgPolicies_next(previous_request=request, previous_response=response)
-        return current_policies
-    except Exception as e:
-        return f"Error fetching org policies: {e}"
+        # Main client remains v1 for compatibility with listOrgPolicies
+        crm_service = google_api_build('cloudresourcemanager', 'v1', credentials=credentials)
 
-def get_project_policies(project_id):
-    """
-    Fetches all effective organization policies for a given Google Cloud project.
-    """
-    print(f"🔍 Fetching effective policies for project: {project_id}...")
-    try:
-        credentials, _ = google_auth_default(scopes=SCOPES)
-        service = google_api_build('cloudresourcemanager', 'v1', credentials=credentials)
-        current_policies, request = {}, service.projects().listOrgPolicies(resource=f'projects/{project_id}', body={})
-        while request:
-            response = request.execute()
-            for policy in response.get('policies', []):
-                if full_path := policy.get('constraint'):
-                    current_policies[full_path.split('/')[-1]] = policy
-            request = service.projects().listOrgPolicies_next(previous_request=request, previous_response=response)
-        return current_policies
-    except Exception as e:
-        return f"Error fetching project policies: {e}"
+        # --- START OF MODIFICATION ---
+        # Initialize a separate v3 client specifically to bypass the v1 'get' bug for folder
+        crm_v3_service = google_api_build('cloudresourcemanager', 'v3', credentials=credentials)
+        # --- END OF MODIFICATION ---
 
-def get_folder_policies(folder_id):
-    """
-    Fetches all effective organization policies for a given Google Cloud folder.
-    """
-    print(f"🔍 Fetching effective policies for folder: {folder_id}...")
-    try:
-        credentials, _ = google_auth_default(scopes=SCOPES)
-        service = google_api_build('cloudresourcemanager', 'v1', credentials=credentials)
-        current_policies, request = {}, service.folders().listOrgPolicies(resource=f'folders/{folder_id}', body={})
-        while request:
-            response = request.execute()
-            for policy in response.get('policies', []):
-                if full_path := policy.get('constraint'):
-                    current_policies[full_path.split('/')[-1]] = policy
-            request = service.folders().listOrgPolicies_next(previous_request=request, previous_response=response)
-        return current_policies
-    except Exception as e:
-        return f"Error fetching folder policies: {e}"
+        def list_policies_for_resource(resource_str):
+            """Helper to fetch and format policies for a given resource string."""
+            policies = {}
+            try:
+                api_call = lambda: crm_service.organizations().listOrgPolicies(resource=resource_str, body={}).execute() if resource_str.startswith('organizations/') else \
+                                 crm_service.folders().listOrgPolicies(resource=resource_str, body={}).execute() if resource_str.startswith('folders/') else \
+                                 crm_service.projects().listOrgPolicies(resource=resource_str, body={}).execute()
+                response = _call_api_with_backoff(api_call, context_message=f"listOrgPolicies for {resource_str}")
+                for policy in response.get('policies', []):
+                    if full_path := policy.get('constraint'):
+                        policies[full_path.split('/')[-1]] = policy
+            except Exception as e:
+                logging.warning(f"Could not list policies for {resource_str}: {e}")
+            return policies
 
+        effective_policies = {}
+        resource_hierarchy = []
+
+        if scope == 'organization':
+            resource_hierarchy.append(f"organizations/{scope_id}")
+        elif scope == 'project':
+            ancestry = crm_service.projects().getAncestry(projectId=scope_id, body={}).execute()
+            for ancestor in ancestry.get('ancestor', []):
+                resource_hierarchy.append(f"{ancestor['resourceId']['type']}s/{ancestor['resourceId']['id']}")
+            resource_hierarchy.append(f"projects/{scope_id}")
+        elif scope == 'folder':
+            ancestors = []
+            curr_folder = f"folders/{scope_id}"
+            while curr_folder:
+                ancestors.append(curr_folder)
+                # --- THIS IS CHANGE FOR FOLDER FIX ---
+                # Use the new v3 client for the 'get' call, which does not have the bug
+                folder_details = crm_v3_service.folders().get(name=curr_folder).execute()
+                # --- END OF CHANGE ---
+                parent = folder_details.get('parent')
+                if parent and parent.startswith('organizations/'):
+                    ancestors.append(parent)
+                    break
+                curr_folder = parent
+            resource_hierarchy = list(reversed(ancestors))
+
+        if not resource_hierarchy:
+            return f"Could not determine hierarchy for {scope} {scope_id}"
+
+        print(f"   -> Traversing hierarchy: {' -> '.join(resource_hierarchy)}")
+        for resource_str in resource_hierarchy:
+            policies_at_level = list_policies_for_resource(resource_str)
+            effective_policies.update(policies_at_level)
+
+        print(f"✅ Successfully calculated {len(effective_policies)} effective policies.")
+        return effective_policies
+
+    except Exception as e:
+        traceback.print_exc()
+        return f"A critical error occurred in get_effective_org_policies: {e}"
+    
 def list_projects_for_scope(scope, scope_id):
     """
-    Retrieves a list of all ACTIVE projects within a given scope (org, folder, or project).
+    Retrieves a list of all ACTIVE projects within a given scope (org, folder, or project)
+    using the recursive Cloud Asset Inventory API for complete coverage.
     """
-    print(f"📋 Listing projects for {scope} '{scope_id}'...")
-    
-    # If the scope is just a single project, return it directly.
+    print(f"📋 Listing projects for {scope} '{scope_id}' using Cloud Asset Inventory...")
+
+    # The single-project case remains the fastest method for that specific scope.
     if scope == 'project':
         try:
             credentials, _ = google_auth_default(scopes=SCOPES)
@@ -421,7 +439,8 @@ def list_projects_for_scope(scope, scope_id):
             project = service.projects().get(projectId=scope_id).execute()
             if project.get('lifecycleState') == 'ACTIVE':
                 print(f"✅ Found 1 ACTIVE project.")
-                return [project]
+                # Return in the same format as the Asset API for consistency
+                return [{'projectId': project['projectId'], 'displayName': project.get('name', project['projectId'])}]
             else:
                 print("⚠️ Project is not ACTIVE.")
                 return []
@@ -429,30 +448,45 @@ def list_projects_for_scope(scope, scope_id):
             print(f"❌ Error fetching single project: {e}")
             return []
 
-    # For orgs and folders, use the list method with a filter.
-    parent_map = {
-        'organization': f'parent.type:organization parent.id:{scope_id}',
-        'folder': f'parent.type:folder parent.id:{scope_id}'
-    }
-    filter_str = parent_map.get(scope)
-    if not filter_str:
-        print(f"❌ Invalid scope '{scope}' provided.")
-        return []
-
+    # --- NEW RECURSIVE LOGIC USING CLOUD ASSET API ---
     try:
-        credentials, _ = google_auth_default(scopes=SCOPES)
-        service = google_api_build('cloudresourcemanager', 'v1', credentials=credentials)
-        projects, request = [], service.projects().list(filter=filter_str)
-        while request:
-            response = request.execute()
-            projects.extend(response.get('projects', []))
-            request = service.projects().list_next(previous_request=request, previous_response=response)
+        asset_client = asset_v1.AssetServiceClient()
+
+        # Define the parent scope for the asset search
+        parent_scope_map = {
+            'organization': f'organizations/{scope_id}',
+            'folder': f'folders/{scope_id}'
+        }
+        asset_search_scope = parent_scope_map.get(scope)
+        if not asset_search_scope:
+            print(f"❌ Invalid scope '{scope}' provided for asset search.")
+            return []
+
+        # Perform a single, recursive search for all projects
+        response = asset_client.search_all_resources(
+            request={
+                "scope": asset_search_scope,
+                "asset_types": ["cloudresourcemanager.googleapis.com/Project"],
+                "query": "state:ACTIVE", # Filter for active projects at the API level
+            }
+        )
+
+        # Process the results into the expected format
+        all_projects = []
+        for resource in response:
+            # The project ID is part of the full resource name
+            project_id = resource.name.split('/')[-1]
+            all_projects.append({
+                'projectId': project_id,
+                'displayName': resource.display_name
+            })
         
-        active_projects = [p for p in projects if p.get('lifecycleState') == 'ACTIVE']
-        print(f"✅ Found {len(active_projects)} ACTIVE projects.")
-        return active_projects
+        print(f"✅ Found {len(all_projects)} ACTIVE projects recursively.")
+        return all_projects
+
     except Exception as e:
-        print(f"❌ Error listing projects for scope {scope}: {e}")
+        logging.error(f"❌ Critical error listing projects with Cloud Asset API: {e}")
+        traceback.print_exc()
         return []
     
 def get_active_compute_locations(all_projects):
@@ -979,108 +1013,113 @@ def run_network_insights(scope_id, all_projects, active_zones, active_regions, j
     # --- THIS HELPER FUNCTION DOES ALL THE PARSING ---
     def _parse_network_insight_content(insight_dict, description, project_id, check_name):
         """
-        Helper to parse raw insight data into a structured dictionary. This version combines
-        all working parsers with the corrected GKE Service Account logic.
+        Helper to parse raw insight data into a structured dictionary. This version includes
+        the corrected logic for extracting the GKE cluster name for serviceAccountInsight.
         """
         parsed_findings_list = []
-        description = insight_dict.get('description', '')
         content_dict = insight_dict.get('content', {})
-        try:
-            if check_name == "GKE Service Account":
-                resource_name = "N/A"
-                # Method 1: Try to get the cluster name from the structured targetResources field.
-                target_resources = insight_dict.get('targetResources', [])
-                if target_resources and target_resources[0]:
+        
+        if check_name == "GKE Service Account":
+            resource_name = "N/A"  # Default value
+
+            # Method 1 (Most Reliable): Use the specific, nested clusterUri from your log data.
+            try:
+                # Path: content -> nodeServiceAccountInsight -> clusterUri
+                cluster_uri = content_dict.get('nodeServiceAccountInsight', {}).get('clusterUri')
+                if cluster_uri and isinstance(cluster_uri, str):
+                    resource_name = cluster_uri.split('/')[-1]
+            except Exception:
+                pass # Failsafe
+
+            # Method 2 (Excellent Fallback): Use the top-level 'target_resources' field.
+            if resource_name == "N/A":
+                target_resources = insight_dict.get('target_resources', [])
+                if target_resources and isinstance(target_resources[0], str):
                     resource_name = target_resources[0].split('/')[-1]
 
-            # Method 2 (Fallback): If targetResources is empty, parse the description string.
+            # Method 3 (Final Fallback): Regex on the description string.
             if resource_name == "N/A":
-                # This regex looks for 'GKE cluster' followed by the name in quotes or backticks.
-                match = re.search(r"GKE cluster [`']([^`']+)['`]", description)
+                match = re.search(r"GKE cluster '([^']+)'", description)
                 if match:
                     resource_name = match.group(1)
 
-                parsed_findings_list.append({
-                    "Project": project_id,
-                    "Finding Type": "GKE Service Account",
-                    "Resource": f"Cluster: {resource_name}",
-                    "Detail": description,
-                    # 2. Use the descriptive name, as this is what the insight provides.
-                    "Value": "Compute Engine default service account"
-                })
-
-            # --- EXISTING PARSERS FOR OTHER INSIGHT TYPES ---
-            elif 'Utilization' in check_name:
-            # For Subnet IP Utilization
-                if 'ipUtilizationSummaryInfo' in content_dict:
-                    for info in content_dict.get('ipUtilizationSummaryInfo', []):
-                        for net_stat in info.get('networkStats', []):
-                            network = net_stat.get('networkUri', 'N/A').split('/')[-1]
-                            for sub_stat in net_stat.get('subnetStats', []):
-                                subnet = sub_stat.get('subnetUri', 'N/A').split('/')[-1]
-                                for range_stat in sub_stat.get('subnetRangeStats', []):
-                                    parsed_findings_list.append({
-                                        "Project": project_id,
-                                        "Finding Type": "Subnet Utilization",
-                                        "Resource": f"Subnet: {subnet} (Network: {network})",
-                                        "Detail": f"Range: {range_stat.get('subnetRangePrefix', 'N/A')}",
-                                        "Value": f"{range_stat.get('allocationRatio', 0) * 100:.2f}% Allocation"
-                                    })
-                    
-                # For PSA IP Utilization
-                if 'psaIpUtilizationSummaryInfo' in content_dict:
-                    for info in content_dict.get('psaIpUtilizationSummaryInfo', []):
-                        for net_stat in info.get('networkStats', []):
-                            network = net_stat.get('networkUri', 'N/A').split('/')[-1]
-                            for psa_stat in net_stat.get('psaStats', []):
-                                parsed_findings_list.append({
-                                    "Project": project_id,
-                                    "Finding Type": "PSA Utilization",
-                                    "Resource": f"Network: {network}",
-                                    "Detail": f"PSA Range: {psa_stat.get('psaRangePrefix', 'N/A')}",
-                                    "Value": f"{psa_stat.get('allocationRatio', 0) * 100:.2f}% Allocation"
-                                })
-
-                # For GKE IP Utilization
-                if 'gkeIpUtilizationSummaryInfo' in content_dict:
-                    for info in content_dict.get('gkeIpUtilizationSummaryInfo', []):
-                        for cluster_stat in info.get('clusterStats', []):
-                            parsed_findings_list.append({
-                                "Project": project_id,
-                                "Finding Type": "GKE Utilization",
-                                "Resource": f"Cluster: {cluster_stat.get('clusterUri', 'N/A').split('/')[-1]}",
-                                "Detail": f"Pod Range Usage: {cluster_stat.get('podRangesAllocationRatio', 0) * 100:.2f}%",
-                                "Value": f"Service Range Usage: {cluster_stat.get('serviceRangesAllocationRatio', 0) * 100:.2f}%"
-                            })
-
-                # For Unassigned External IPs
-                if 'overallStats' in content_dict:
-                    stats = content_dict['overallStats']
-                    parsed_findings_list.append({
-                            "Project": project_id,
-                            "Finding Type": "Unassigned IPs",
-                            "Resource": "Organization (Overall)",
-                            "Detail": f"Total Reserved: {stats.get('reservedCount', 0):.0f}",
-                            "Value": f"Unassigned Count: {stats.get('unassignedCount', 0):.0f} ({stats.get('unassignedRatio', 0) * 100:.2f}%)"
-                    })
-
-        except Exception as e:
-            return [{
-                "Project": project_id,
-                "Finding Type": "Parse Error",
-                "Resource": description,
-                "Detail": str(e),
-                "Value": "Error"
-            }]
-
-        # Fallback logic for any other un-parsed insights
-        if not parsed_findings_list:
+            # Append the finding once, after all attempts are complete.
             parsed_findings_list.append({
                 "Project": project_id,
-                "Finding Type": "General Insight",    
-                "Resource": description,            
-                "Detail": "(No structured data)",   
-                "Value": "See finding"              
+                "Finding Type": "GKE Service Account",
+                "Resource": f"Cluster: {resource_name}",
+                "Detail": description,
+                "Value": "Compute Engine default service account"
+            })
+
+    # --- END OF GKE PARSER ---
+
+        # --- END OF MODIFICATION ---
+        
+        # --- EXISTING PARSERS FOR OTHER INSIGHT TYPES ---
+        elif 'Utilization' in check_name:
+            # For Subnet IP Utilization
+            if 'ipUtilizationSummaryInfo' in content_dict:
+                for info in content_dict.get('ipUtilizationSummaryInfo', []):
+                    for net_stat in info.get('networkStats', []):
+                        network = net_stat.get('networkUri', 'N/A').split('/')[-1]
+                        for sub_stat in net_stat.get('subnetStats', []):
+                            subnet = sub_stat.get('subnetUri', 'N/A').split('/')[-1]
+                            for range_stat in sub_stat.get('subnetRangeStats', []):
+                                parsed_findings_list.append({
+                                    "Project": project_id,
+                                    "Finding Type": "Subnet Utilization",
+                                    "Resource": f"Subnet: {subnet} (Network: {network})",
+                                    "Detail": f"Range: {range_stat.get('subnetRangePrefix', 'N/A')}",
+                                    "Value": f"{range_stat.get('allocationRatio', 0) * 100:.2f}% Allocation"
+                                })
+                
+            # For PSA IP Utilization
+            if 'psaIpUtilizationSummaryInfo' in content_dict:
+                for info in content_dict.get('psaIpUtilizationSummaryInfo', []):
+                    for net_stat in info.get('networkStats', []):
+                        network = net_stat.get('networkUri', 'N/A').split('/')[-1]
+                        for psa_stat in net_stat.get('psaStats', []):
+                            parsed_findings_list.append({
+                                "Project": project_id,
+                                "Finding Type": "PSA Utilization",
+                                "Resource": f"Network: {network}",
+                                "Detail": f"PSA Range: {psa_stat.get('psaRangePrefix', 'N/A')}",
+                                "Value": f"{psa_stat.get('allocationRatio', 0) * 100:.2f}% Allocation"
+                            })
+
+            # For GKE IP Utilization
+            if 'gkeIpUtilizationSummaryInfo' in content_dict:
+                for info in content_dict.get('gkeIpUtilizationSummaryInfo', []):
+                    for cluster_stat in info.get('clusterStats', []):
+                        parsed_findings_list.append({
+                            "Project": project_id,
+                            "Finding Type": "GKE Utilization",
+                            "Resource": f"Cluster: {cluster_stat.get('clusterUri', 'N/A').split('/')[-1]}",
+                            "Detail": f"Pod Range Usage: {cluster_stat.get('podRangesAllocationRatio', 0) * 100:.2f}%",
+                            "Value": f"Service Range Usage: {cluster_stat.get('serviceRangesAllocationRatio', 0) * 100:.2f}%"
+                        })
+
+            # For Unassigned External IPs
+            if 'overallStats' in content_dict:
+                stats = content_dict['overallStats']
+                parsed_findings_list.append({
+                        "Project": project_id,
+                        "Finding Type": "Unassigned IPs",
+                        "Resource": "Organization (Overall)",
+                        "Detail": f"Total Reserved: {stats.get('reservedCount', 0):.0f}",
+                        "Value": f"Unassigned Count: {stats.get('unassignedCount', 0):.0f} ({stats.get('unassignedRatio', 0) * 100:.2f}%)"
+                })
+
+        # --- Fallback for any other insight types remains the same ---
+        if not parsed_findings_list:
+            # This block now also handles cases where an error might occur in a specific parser
+            parsed_findings_list.append({
+                "Project": project_id,
+                "Finding Type": "General Insight",
+                "Resource": description,
+                "Detail": "(No structured data)",
+                "Value": "See finding"
             })
             
         return parsed_findings_list
@@ -1283,13 +1322,10 @@ def check_organization_policies(scope, scope_id, job_id):
     print(f"📜 [{job_id}] Checking for {CHECK_NAME}...")
     best_practices = get_best_practices_from_gcs(GCS_PUBLIC_URL)
     
-    current_policies = {}
-    if scope == 'organization':
-        current_policies = get_organization_policies(scope_id)
-    elif scope == 'folder':
-        current_policies = get_folder_policies(scope_id)
-    elif scope == 'project':
-        current_policies = get_project_policies(scope_id)
+   
+    # Call the function that manually traverses the hierarchy
+    current_policies = get_effective_org_policies(scope, scope_id)
+    
     
     if isinstance(best_practices, dict) and isinstance(current_policies, dict):
         _write_org_policies_to_gcs(job_id, best_practices, current_policies)
